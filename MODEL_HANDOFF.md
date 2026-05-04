@@ -72,14 +72,27 @@ src/lib/context.ts          DESIGN.md and AGENTS.md loader, BRAND_PREAMBLE
 - The orchestrator's `runStep()` helper persists every step twice — once at start (status=running) and once at finish (status=complete or failed). Supabase `onConflict: 'run_id,step'` makes this idempotent.
 - Costs are computed per-executor using a placeholder rate of $3/M input + $15/M output. Replace with actual model pricing when a routing decision is finalized.
 
+## Database
+
+`drip` Supabase project (id `bocvtwwmqphfnwmzdjcc`, region us-east-2) is shared between this repo and styleMeUp.
+
+- `magazine_run_steps` — owned by the-edit, service role only
+- `magazine_issue_manifests` — owned by the-edit, service role only
+- `app_*` — reserved namespace for styleMeUp app tables (not yet created)
+
+RLS is enabled on both magazine tables but no policies exist — service role bypasses RLS, and anon/authenticated grants have been revoked. The two INFO-level "RLS enabled, no policies" advisor notes are intentional.
+
+Migrations live in `supabase/migrations/` as timestamped SQL files. Apply with `supabase db push` or via the MCP `apply_migration` tool.
+
 ## Verification Snapshot
 
 - `npx tsc --noEmit` passes with zero errors.
 - `npm install` succeeds with the lockfile committed.
-- No code has executed against Anthropic or Supabase yet.
+- Three migrations applied to drip; security advisors show zero ERROR or WARN issues.
+- No code has executed against Anthropic yet.
 
 ## Immediate Next Checks
 
 - See `NEXT_STEPS.md` for the active queue.
-- The first concrete blocker is creating the Supabase schema. Until that exists, `npm run draft` will fail at the first `persistStep()` call.
+- The first concrete blocker is the missing service role key in `.env`. Once that's populated, `npm run draft` should reach the first executor.
 - The second blocker is deciding whether research starts from manual source packets or live APIs. Without real sources, the research executor will produce ungrounded candidates that the QA executor will correctly reject.

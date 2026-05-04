@@ -25,21 +25,29 @@ Get one weekly run end-to-end in draft mode. No production publishing yet.
 
 ## Next steps
 
-1. Create the Supabase schema for `magazine_run_steps` and `magazine_issue_manifests`.
-   - Add a `supabase/migrations/` directory with timestamped SQL files.
-   - Match the column names already used in `src/lib/supabase.ts`.
-2. Configure `.env` with:
+1. Configure `.env` locally with:
    - `ANTHROPIC_API_KEY`
-   - `SUPABASE_URL`
-   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY` (copy from drip project dashboard)
+   - `SUPABASE_URL` is already set in `.env.example`
    - `STYLEMEUP_REPO_PATH` pointing at the local clone.
-3. Run `npm run draft` for the first time and capture what breaks.
-4. Replace the hard-coded `nextVolume()` (currently 19) with a Supabase query that reads the last published volume.
-5. Implement a `npm run publish -- --run-id <id>` command that:
+2. Run `npm run draft` for the first time and capture what breaks.
+3. Replace the hard-coded `nextVolume()` (currently 19) with a Supabase query that reads `max(volume)` from `magazine_issue_manifests`.
+4. Implement a `npm run publish -- --run-id <id>` command that:
    - Loads the approved draft and asset paths.
    - Calls `runPublish()` to write the manifest.
-6. Decide whether asset upload (Nano Banana / Kling outputs) lives in this repo or stays manual.
-7. Decide whether the styleMeUp app reads issues from Supabase directly or via a separate StyleMeUp API.
+5. Decide whether asset upload (Nano Banana / Kling outputs) lives in this repo or stays manual.
+6. Decide whether the styleMeUp app reads issues from Supabase directly or via a separate StyleMeUp API.
+
+## Database state
+
+The `drip` Supabase project (id `bocvtwwmqphfnwmzdjcc`, us-east-2) is shared between this repo and styleMeUp. Naming convention:
+
+- `magazine_*` — owned by the-edit (writes via service role only)
+- `app_*` — reserved for styleMeUp app tables (not yet created)
+
+Current tables: `magazine_run_steps`, `magazine_issue_manifests`. Both RLS-enabled with no policies, anon/authenticated grants revoked. Service role only.
+
+Legacy Prisma tables from a prior styleMeUp iteration (`User`, `WardrobeItem`, etc.) were dropped on 2026-05-04 — they were empty and incompatible with the current Expo app architecture.
 
 ## Track-level alignment with styleMeUp
 

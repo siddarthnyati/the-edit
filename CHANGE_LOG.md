@@ -1,5 +1,29 @@
 # the-edit Change Log
 
+## 2026-05-04 04:15 PM ET
+
+- Changed:
+  - Restored the `drip` Supabase project (id `bocvtwwmqphfnwmzdjcc`, us-east-2) and chose it as the shared database for both styleMeUp and the-edit.
+  - Applied three migrations:
+    - `20260504_init_magazine.sql` — created `magazine_run_steps` and `magazine_issue_manifests` with RLS enabled.
+    - `20260504_drop_legacy_prisma.sql` — dropped seven abandoned Prisma tables (`User`, `UserProfile`, `WardrobeItem`, `OutfitRecommendation`, `WearLog`, `SavedOutfit`, `_prisma_migrations`) from a prior styleMeUp iteration. All were empty and had RLS disabled.
+    - `20260504_lock_magazine_grants.sql` — revoked `SELECT` from `anon` and `authenticated` on both magazine tables so they are not discoverable through PostgREST/GraphQL.
+  - Updated `.env.example` with the drip project URL.
+  - Updated `NEXT_STEPS.md` with the database state and naming convention.
+- Why:
+  - The drip project was originally created for styleMeUp but never wired up. Reusing it avoids spinning up a third Supabase project.
+  - Sharing the database between styleMeUp and the-edit is the simplest path. The naming prefix (`magazine_*` vs future `app_*`) keeps domains separated.
+  - The legacy Prisma schema represented a prior product iteration that diverged from the current Expo app's data model. Adapting it would have been more work than starting fresh when styleMeUp eventually needs server-side state.
+  - Locking down anon/authenticated grants matches the spec: provider keys and pipeline state never reach the client.
+- Affected:
+  - new directory: `supabase/migrations/`
+  - new files: three migration SQL files
+  - modified: `.env.example`, `NEXT_STEPS.md`
+  - drip database schema
+- Next:
+  - copy the service role key from the drip dashboard into `.env`
+  - run `npm run draft` end-to-end for the first time
+
 ## 2026-05-04 03:30 PM ET
 
 - Changed:
