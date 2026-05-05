@@ -158,6 +158,22 @@ async function approvalGate(label: string, runId: string, summary: unknown): Pro
   // approval record and wait for a webhook or manual resume command.
   console.log(`\n━━━ APPROVAL GATE: ${label} ━━━`);
   console.log(JSON.stringify(summary, null, 2));
+
+  if (process.env['MAGAZINE_AUTO_APPROVE'] === 'true') {
+    console.log('━━━ MAGAZINE_AUTO_APPROVE=true — auto-approving for smoke test. ━━━\n');
+    await persistStep({
+      runId,
+      step: 'approval',
+      status: 'complete',
+      input: summary,
+      output: { approved: true, autoApproved: true, approvedAt: new Date().toISOString() },
+      sources: [],
+      createdAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    });
+    return;
+  }
+
   console.log('━━━ Review the above and press Enter to continue, or Ctrl+C to abort. ━━━\n');
 
   await new Promise<void>((resolve) => {

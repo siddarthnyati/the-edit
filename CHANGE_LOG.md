@@ -1,5 +1,29 @@
 # the-edit Change Log
 
+## 2026-05-04 09:30 PM ET
+
+- Changed:
+  - First end-to-end pipeline run completed against real Supabase, real Anthropic API, and real web search.
+  - Switched the research search call to `messages.stream()` — non-streaming was timing out behind the SDK's idle window when web search ran multiple sub-requests.
+  - Constrained the search call: `max_uses: 5` on the web search tool, prompt asks for exactly 3 trends and ≤ 2000 words, smaller `DESIGN.md` excerpt in the system prompt.
+  - Inserted a 25-second wait between stage 1 (search) and stage 2 (structuring) to avoid stacking against the 30K input tokens / minute rate limit.
+  - Trimmed the narrative passed to stage 2 to 8000 characters.
+  - Added `MAGAZINE_AUTO_APPROVE=true` env flag to skip stdin pauses on approval gates — for smoke tests only, never default behavior.
+  - Verified via Supabase: every step from a successful run is persisted with `status: 'complete'` and the run ID can be reconstructed end-to-end.
+- Why:
+  - The first unconstrained search ran 200K+ input tokens behind the scenes (search results count against the same window) and the structuring stage hit the rate limit before Anthropic's per-minute window reset.
+  - Streaming is the right default for any tool-use call. Non-streaming on tool use is a recipe for timeouts.
+  - Caps + delays let the pipeline stay inside a free-tier rate limit. Any caller with a higher tier can remove the wait.
+  - QA verdict on the first real run was `revise` — it correctly caught Vogue-test failures, ungrounded sourcing, banned tool names in asset prompts, and a WCAG alt-text issue. The architecture works.
+- Cost on the successful run: $0.48 total — research $0.27, rank $0.02, edit $0.03, prompt $0.04, QA $0.11. Well under the $4 budget.
+- Affected:
+  - `src/executors/research.ts` (streaming, `max_uses`, prompt tightening, stage delay, narrative trim)
+  - `src/orchestrator/index.ts` (auto-approve gate)
+- Next:
+  - persist `estimated_cost_usd` into Supabase (currently `null` in run rows even though the value is logged)
+  - decide how the orchestrator should handle a `revise` verdict: auto-iterate on the failed sections vs. hand off to a human
+  - bake the asset-tool-name ban into the prompt executor's system prompt so QA doesn't have to catch it every time
+
 ## 2026-05-04 04:45 PM ET
 
 - Changed:

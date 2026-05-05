@@ -42,26 +42,36 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
     input.runConfig.seedTrend ? `Seed trend hint: ${input.runConfig.seedTrend}` : '',
     `Prior issues to avoid reusing: ${input.priorIssueSlugs.join(', ') || 'none'}`,
     '',
-    'Use web search to find evidence that 2-5 fashion trends are returning from a prior era.',
-    'For each trend, identify:',
+    'Use web search to find evidence for exactly 3 fashion trends that are returning',
+    'from a prior era. Run no more than 5 total searches — be efficient.',
+    'For each trend, give a short paragraph covering:',
     '- the era it returns from (decade or specific cultural moment)',
-    '- editorial or runway signals from the last 90 days',
-    '- retail or resale signals (where the garment is showing up to buy)',
+    '- 1-2 strong editorial or runway signals from the last 90 days',
     '- styling angle relevant to a foundation wardrobe (denim, tees, leather)',
+    '- evidence gaps (what type of source you could not find)',
     '',
-    'Cite every claim. If a claim has no source, mark it unsupported. Avoid private',
-    'social signals, login-walled content, and unsourced influencer screenshots.',
+    'Keep total output under 2000 words. Cite every factual claim.',
+    'No login-walled content, no unsourced influencer screenshots.',
   ].filter(Boolean).join('\n');
 
   const searchModel = process.env['MAGAZINE_RESEARCH_MODEL'] ?? 'claude-sonnet-4-6';
 
-  const searchResponse = await anthropicClient.messages.create({
+  // Stream the search call. Web search may issue multiple sub-requests under
+  // the hood, and a non-streaming call frequently exceeds the SDK's idle
+  // timeout. Streaming keeps the connection alive while Claude works.
+  // max_uses caps how many search queries Claude runs — without it, an
+  // unconstrained run can pull in 200+ sources and blow the rate limit.
+  const stream = anthropicClient.messages.stream({
     model: searchModel,
     max_tokens: 8000,
-    system: [BRAND_PREAMBLE, '', '## DESIGN.md (excerpt)', designMd().slice(0, 4000)].join('\n'),
-    tools: [{ type: 'web_search_20260209', name: 'web_search' }],
+    system: [BRAND_PREAMBLE, '', '## DESIGN.md (excerpt)', designMd().slice(0, 3000)].join('\n'),
+    tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }],
     messages: [{ role: 'user', content: searchPrompt }],
   });
+
+  stream.on('text', (delta) => process.stdout.write(delta));
+  const searchResponse = await stream.finalMessage();
+  process.stdout.write('\n');
 
   // Pull narrative text + grounded sources from the response
   const { narrative, sources } = extractResearch(searchResponse);
@@ -75,21 +85,26 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
   );
 
   // ── Stage 2: structure the narrative into typed candidates ────────────────
+  // Wait briefly to avoid stacking against the per-minute rate limit. The
+  // search call may have spent 200K+ input tokens behind the scenes (web
+  // search results count against the same window).
+  await new Promise((resolve) => setTimeout(resolve, 25_000));
+
+  // Trim the narrative to keep stage 2 inside the rate window. We only need
+  // the structural skeleton, not the full editorial copy or the citations.
+  const trimmed = narrative.length > 8000 ? narrative.slice(0, 8000) + '\n[truncated]' : narrative;
+
   const structureModel = process.env['MAGAZINE_RESEARCH_MODEL'] ?? 'claude-sonnet-4-6';
   const { object, usage } = await generateObject({
     model: anthropic(structureModel),
     schema: StructuredResearchSchema,
-    system: BRAND_PREAMBLE,
     prompt: [
-      'Convert the research narrative below into 2-5 trend candidates.',
+      'Convert the research narrative below into 3 trend candidates.',
       'Each candidate must have a clear era reference and a current signal summary.',
       'If sources for a candidate are weak, list the gaps explicitly.',
       '',
-      '## Research narrative (with web citations)',
-      narrative,
-      '',
-      '## Sources gathered',
-      sources.map((s) => `- ${s.publisher}: ${s.title} (${s.url})`).join('\n'),
+      '## Research narrative',
+      trimmed,
     ].join('\n'),
   });
 
