@@ -65,23 +65,41 @@ async function nextVolume(): Promise<number> {
   return typeof last === 'number' ? last + 1 : 19;
 }
 
-function placeholderAssetPaths(slug: string): MagazineIssueManifest['assetPaths'] {
-  // V1 placeholder. Replace with real Supabase Storage URLs after Step 3+4.
-  const base = `placeholder://${slug}`;
+async function loadPickedAssetPaths(rid: string): Promise<MagazineIssueManifest['assetPaths']> {
+  const { data, error } = await supabase
+    .from('magazine_image_variants')
+    .select('slot, storage_path')
+    .eq('run_id', rid)
+    .eq('picked', true);
+
+  if (error) throw new Error(`Loading picked variants: ${error.message}`);
+
+  const bySlot = new Map<string, string>();
+  for (const row of data ?? []) {
+    bySlot.set(row.slot as string, row.storage_path as string);
+  }
+
+  const required = ['cover-start', 'cover-end', 'trend-1', 'trend-2', 'trend-3', 'curator-1', 'curator-2'];
+  const missing = required.filter((s) => !bySlot.has(s));
+  if (missing.length > 0) {
+    throw new Error(
+      `Cannot publish: missing picks for slots [${missing.join(', ')}]. ` +
+      `Run "npm run imagine -- ${rid}" then "npm run pick -- ${rid}" first.`,
+    );
+  }
+
+  // Storage paths are bucket-relative; turn them into resolvable URLs.
+  // For a private bucket, you'd use signed URLs at read-time. For V1, we
+  // store the bucket-relative path and let the app backend sign on demand.
+  const url = (slot: string) => `magazine-assets/${bySlot.get(slot)}`;
+
   return {
-    coverStart: `${base}/cover-start.png`,
-    coverEnd: `${base}/cover-end.png`,
-    coverMotion: `${base}/cover-motion.mp4`,
-    coverFrames: `${base}/cover-frames/`,
-    trendCards: [
-      `${base}/trend-1.png`,
-      `${base}/trend-2.png`,
-      `${base}/trend-3.png`,
-    ],
-    curatorCards: [
-      `${base}/curator-1.png`,
-      `${base}/curator-2.png`,
-    ],
+    coverStart: url('cover-start'),
+    coverEnd: url('cover-end'),
+    coverMotion: '', // V1: no motion (Kling deferred to V2)
+    coverFrames: '', // V1: covered by coverStart + coverEnd as a 2-frame sequence
+    trendCards: [url('trend-1'), url('trend-2'), url('trend-3')],
+    curatorCards: [url('curator-1'), url('curator-2')],
   };
 }
 
@@ -111,7 +129,9 @@ async function main() {
 
   const volume = await nextVolume();
   console.log(`[publish] next volume: ${volume}`);
-  console.log(`[publish] using placeholder asset paths — wire image executor in Step 3 to replace.`);
+
+  const assetPaths = await loadPickedAssetPaths(rid);
+  console.log(`[publish] all 7 slot picks resolved.`);
 
   const result = await runPublish({
     runConfig: config,
@@ -119,7 +139,7 @@ async function main() {
     prompts,
     research,
     volume,
-    assetPaths: placeholderAssetPaths(draft.cover.slug),
+    assetPaths,
   });
 
   console.log(`\n[publish] DONE`);
