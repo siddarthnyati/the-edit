@@ -6,6 +6,7 @@
   "scripts": {
     "draft": "tsx src/orchestrator/index.ts",
     "inspect": "tsx src/scripts/inspect.ts",
+    "publish": "tsx src/scripts/publish.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts"
   },
