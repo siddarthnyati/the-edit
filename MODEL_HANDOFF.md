@@ -3,27 +3,54 @@
 Status: living context for any model continuing the work on this repo.
 Last updated: 2026-05-05 (V1 image-loop plan committed; Step 0 shipped)
 
-## V1 plan in flight
+## V1 status — backbone complete, optimizations remaining
 
-Pipeline today reaches QA-passed draft. Remaining V1 work to close the loop:
+The full V1 loop is wired end-to-end:
 
-- ✅ **Step 0** — cost caps tightened to $2 hard / $1.50 soft / $1 web-search with salvage-on-cap
-- 🔜 **Step 5** — `npm run publish -- <runId>` writes manifest after approval
-- 🔜 **Step 3** — `src/executors/imagine.ts` (Gemini 2.5 Flash Image, 4 variants × 7 slots)
-- 🔜 **Step 4** — `npm run pick -- <runId>` CLI variant selector
-- 🔜 **Step 1** — prompt caching on static prompt blocks
-- 🔜 **Step 2** — Supabase `magazine_search_archive` + backfill 292 stored sources
+```
+npm run draft                  # research → rank → edit → prompt → qa
+npm run imagine -- <runId>     # Gemini generates 4 × 7 = 28 variants
+npm run pick    -- <runId>     # macOS Quick Look picker, 1 per slot
+npm run publish -- <runId>     # writes manifest with picked asset paths
+```
 
-Slot composition for image generation:
+Plus `npm run inspect` to list/dump runs.
+
+- ✅ **Step 0** (`f7d7aed`) — caps $2/$1.50/$1 with salvage-on-cap
+- ✅ **Step 5** (`b6b2c6a`) — publish CLI
+- ✅ **Step 3** (`986b13b`) — imagine executor (Gemini 2.5 Flash Image)
+- ✅ **Step 4** (`72fa6ee`) — variant picker CLI
+- 🔜 **Step 1** — prompt caching (~30% cost reduction)
+- 🔜 **Step 2** — search archive + backfill 292 stored sources
+
+Slot composition (locked):
 1. Cover start — hero garment alone
 2. Cover end — same garment, different angle
 3-5. Trend cards (3) — one specific garment per card on void
 6-7. Curator rotations (2) — full outfit (top + bottom + shoes) on void
 
-Steady-state cost target: **~$1.20 per run** with images, caching, and archive lookups.
-Hard cap: **$2 per run**. Web search alone capped at $1.
+Steady-state cost target with caching + archive: **~$1.20 per run**.
+Today (no caching, no archive): ~$1.60 per run.
+Hard cap: $2 per run. Web search alone capped at $1.
 
-Kling motion is **dropped from V1**. Revisit in V2 once base costs are stable and the API is purchased.
+Kling motion is **dropped from V1** — manifest has empty `coverMotion` and `coverFrames`. `coverStart` + `coverEnd` provide the cover.
+
+## How to run end-to-end (cold start)
+
+```bash
+cd /Users/siddarthnyati/the-edit
+
+# .env must have ANTHROPIC_API_KEY, GEMINI_API_KEY, SUPABASE_URL,
+# SUPABASE_SERVICE_ROLE_KEY, STYLEMEUP_REPO_PATH
+
+npm run draft                                 # ~$0.50, ~3-5 min
+npm run inspect                               # see the runId
+npm run imagine -- <runId>                    # ~$1.10, ~2-3 min
+npm run pick -- <runId>                       # interactive, ~5 min
+npm run publish -- <runId>                    # writes manifest row
+```
+
+`MAGAZINE_AUTO_APPROVE=true` env flag skips the orchestrator's approval-gate stdin pauses for smoke tests only.
 
 ## Product Frame
 

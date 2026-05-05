@@ -2,54 +2,50 @@
 
 Last updated: 2026-05-05 (V1 image-loop plan committed)
 
-## Active V1 plan — every run under $2, includes images
+## V1 status — backbone complete, optimizations remaining
 
-Six numbered steps in execution order. Step 0 has shipped as of this update; 5 → 3 → 4 → 1 → 2 are next.
+Steps 0, 5, 3, 4 are shipped. The full V1 loop runs end-to-end:
 
-### Step 0 — Tighten cost caps (✓ shipped)
+```
+npm run draft                  # research → rank → edit → prompt → qa
+npm run imagine -- <runId>     # Gemini generates 4 × 7 = 28 variants
+npm run pick    -- <runId>     # macOS Quick Look picker, 1 winner per slot
+npm run publish -- <runId>     # writes manifest with picked asset paths
+```
 
-- `MAGAZINE_HARD_CAP_USD=2` (was $25)
-- `MAGAZINE_BUDGET_USD=1.50` soft warning
-- `MAGAZINE_WEB_SEARCH_CAP_USD=1` (new) — when exceeded, research stops issuing further queries but **salvages whatever sources it already gathered**. Run only aborts if the cap is hit with zero sources.
-- `web_search_20260209` `max_uses` lowered from 5 to 3 — top 3 queries return ~25-30 sources, plenty for synthesis.
-- Web search cost now tracked separately via `recordWebSearchCost()`. Per-query fee counted ($0.01 × server_tool_use blocks), not per-source.
+Plus utilities: `npm run inspect` (list / dump runs), all costs persisted to Supabase.
 
-### Step 5 — Wire `npm run publish` (next)
+### ✓ Step 0 — Tighten cost caps (shipped `f7d7aed`)
 
-- Add `src/scripts/publish.ts` that takes a `runId` and:
-  - reads the approved draft + (later) the variant picks
-  - calls `runPublish()` which writes the manifest into `magazine_issue_manifests`
-- Wire it as `npm run publish -- <runId>`
-- Closes the V1 backbone (research → ... → published manifest readable by the styleMeUp app)
+- `MAGAZINE_HARD_CAP_USD=2`, `MAGAZINE_BUDGET_USD=1.50`, `MAGAZINE_WEB_SEARCH_CAP_USD=1`
+- Salvage-on-cap: research stops issuing new queries when web cap hit, but proceeds with sources already gathered
+- `web_search_20260209` `max_uses: 3`
+- Per-query billing fixed (was per-source)
 
-### Step 3 — Image executor (Gemini 2.5 Flash Image)
+### ✓ Step 5 — Wire `npm run publish` (shipped `b6b2c6a`)
 
-- `src/executors/imagine.ts` — calls Gemini API, generates 4 variants per slot
-- 7 slots × 4 variants = 28 generated images per issue, ~$1.09 cost
-- Slot composition (locked):
-  | # | Slot | Subject |
-  |---|---|---|
-  | 1 | Cover start frame | hero garment, alone |
-  | 2 | Cover end frame | same garment, different angle |
-  | 3-5 | Trend cards 1-3 | one specific garment per card on void |
-  | 6-7 | Curator rotations | full outfit (top + bottom + shoes) |
-- Storage: Supabase bucket `magazine-assets/{runId}/{slotName}/{variantIdx}.png`
-- New table: `magazine_image_variants` linking variant URL → run + slot
-- Kling motion: **dropped from V1**. Cover treatment is `rendered_hero` (single static).
+- `src/scripts/publish.ts` reads research/edit/prompt outputs from a completed run, confirms QA approved, resolves next volume, calls `runPublish()` to write the manifest
 
-### Step 4 — CLI variant picker
+### ✓ Step 3 — Image executor (shipped `986b13b`)
 
-- `npm run pick -- <runId>` — opens generated variants for review
-- macOS: spawns `open` with the 4-variant grid per slot, user types `1`-`4` to pick
-- Selections written to `magazine_issue_manifests.asset_paths` and the row marked ready-to-publish
+- New table `magazine_image_variants` + `magazine-assets` Supabase Storage bucket
+- `src/executors/imagine.ts` generates 4 variants per slot via Gemini 2.5 Flash Image, uploads to Storage, indexes in DB
+- `npm run imagine -- <runId>`
+- Slot composition (locked): cover-start, cover-end, trend-1..3, curator-1..2
 
-### Step 1 — Prompt caching (saves ~30%)
+### ✓ Step 4 — CLI variant picker (shipped `72fa6ee`)
+
+- `npm run pick -- <runId>` downloads variants, opens in `qlmanage -p`, you press 1-4 (or s to skip / q to quit)
+- Pick clears any prior pick on the same slot — fully re-runnable
+- Publish script now reads picked variants instead of placeholder paths and refuses to publish until all 7 slots have a winner
+
+### 🔜 Step 1 — Prompt caching (saves ~30% per run)
 
 - Add `cache_control: { type: 'ephemeral' }` to the static-by-run blocks: BRAND_PREAMBLE, DESIGN.md excerpts, full DESIGN.md in QA executor
 - QA cost drops from $0.11 → ~$0.02 after first cache write
 - Editor and research-search benefit too. Total run-to-run savings: 30-40%
 
-### Step 2 — Source archive + 292-source backfill
+### 🔜 Step 2 — Source archive + 292-source backfill
 
 - New table `magazine_search_archive(url, title, publisher, signal_type, trend_keywords, raw_snippet, first_seen_at, last_seen_at)`
 - Research executor checks archive before issuing a web search; if ≥ 15 fresh sources match the seed trend, **skip web search entirely**

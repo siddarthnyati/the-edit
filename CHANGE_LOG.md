@@ -1,5 +1,33 @@
 # the-edit Change Log
 
+## 2026-05-05 (V1 backbone complete: Steps 0 + 5 + 3 + 4 shipped)
+
+- Changed:
+  - **Step 5 (`b6b2c6a`)** — `npm run publish -- <runId>` reads research/edit/prompt outputs from a completed run, confirms QA approved, resolves next volume number from `magazine_issue_manifests`, calls `runPublish()` to write the manifest. Refuses to publish if QA verdict was anything but `approve`.
+  - **Step 3 (`986b13b`)** — `npm run imagine -- <runId>` calls Gemini 2.5 Flash Image (`gemini-2.5-flash-image-preview`) to generate 4 variants per slot for all 7 slots. Variants land in the `magazine-assets` Supabase Storage bucket and are indexed in a new `magazine_image_variants` table. New env var `GEMINI_API_KEY`. New env var `MAGAZINE_VARIANTS_PER_SLOT` (default 4).
+  - **Step 4 (`72fa6ee`)** — `npm run pick -- <runId>` downloads each slot's variants from Storage, opens them in macOS Quick Look (`qlmanage -p`), prompts for 1-4 selection. Each pick clears any prior pick on the same slot. Re-runnable. Publish script updated to read picked rows from `magazine_image_variants` instead of placeholder paths — refuses to publish if any of the 7 slots is unpicked.
+  - Migration `20260505_image_variants.sql` applied to drip Supabase. Created `magazine_image_variants` table (RLS on, anon/auth grants revoked) and `magazine-assets` Storage bucket (private).
+  - Locked Kling motion as deferred to V2 — V1 manifests have empty `coverMotion` and `coverFrames`. `coverStart` + `coverEnd` provide the cover treatment.
+- Why:
+  - The full V1 loop (draft → imagine → pick → publish) is the minimum bar for a "working pipeline." Stopping at draft made the system an outline, not a product.
+  - Variant picker as CLI is fine for V1 — you're the only operator. App-side admin UI is V2 work.
+- Cost picture per run with images shipped today:
+  - draft: ~$0.50 (research + rank + edit + prompt + QA)
+  - imagine: ~$1.09 (28 × $0.039)
+  - **total ~$1.60 per issue** — well inside the $2 hard cap.
+- Affected:
+  - `src/executors/imagine.ts` (new)
+  - `src/scripts/publish.ts` (new)
+  - `src/scripts/imagine.ts` (new)
+  - `src/scripts/pick.ts` (new)
+  - `supabase/migrations/20260505_image_variants.sql` (new)
+  - `package.json` (3 new scripts: imagine, pick, publish)
+  - `.env.example` (GEMINI_API_KEY, MAGAZINE_VARIANTS_PER_SLOT)
+- Next:
+  - Step 1 — prompt caching for ~30% cost reduction
+  - Step 2 — search archive + 292-source backfill
+  - Once both ship, steady-state runs land at ~$1.20
+
 ## 2026-05-05 (Step 0: cost cap tightening + V1 plan locked)
 
 - Changed:
