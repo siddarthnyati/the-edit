@@ -3,7 +3,7 @@ import { anthropic } from '@ai-sdk/anthropic';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { BRAND_PREAMBLE, designMd } from '../lib/context.js';
-import { recordCost } from '../lib/cost.js';
+import { recordCost, recordWebSearchCost, exceededWebSearchCap, getWebSearchCost } from '../lib/cost.js';
 import type { RunConfig, Source } from '../orchestrator/types.js';
 
 // ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
     model: searchModel,
     max_tokens: 8000,
     system: [BRAND_PREAMBLE, '', '## DESIGN.md (excerpt)', designMd().slice(0, 3000)].join('\n'),
-    tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }],
+    tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }],
     messages: [{ role: 'user', content: searchPrompt }],
   });
 
@@ -77,15 +77,43 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
   // Pull narrative text + grounded sources from the response
   const { narrative, sources } = extractResearch(searchResponse);
 
-  const stage1Cost =
+  // Cost = input tokens + output tokens + web search query fee.
+  // Anthropic bills $0.01 per query (not per source). Count actual queries
+  // by looking for server_tool_use blocks in the response.
+  const queryCount = searchResponse.content.filter(
+    (b: Anthropic.Messages.ContentBlock) => b.type === 'server_tool_use',
+  ).length;
+
+  const tokenCost =
     (searchResponse.usage.input_tokens * 0.000003) +
-    (searchResponse.usage.output_tokens * 0.000015) +
-    (sources.length * 0.01); // web search: $10 per 1000 queries; conservatively count one query per source
-  recordCost(stage1Cost, 'research/search');
+    (searchResponse.usage.output_tokens * 0.000015);
+  const searchFee = queryCount * 0.01;
+
+  recordCost(tokenCost, 'research/search-tokens');
+  recordWebSearchCost(searchFee);
+
   console.log(
-    `[research/search] ~$${stage1Cost.toFixed(4)} | ${sources.length} sources | ` +
-    `${searchResponse.usage.input_tokens}p + ${searchResponse.usage.output_tokens}c tokens`,
+    `[research/search] ~$${(tokenCost + searchFee).toFixed(4)} | ${queryCount} queries | ` +
+    `${sources.length} sources | ${searchResponse.usage.input_tokens}p + ` +
+    `${searchResponse.usage.output_tokens}c tokens (search-fee $${searchFee.toFixed(4)} | ` +
+    `cumulative web-search $${getWebSearchCost().toFixed(4)})`,
   );
+
+  // Salvage path: if web search cap was exceeded, do not run additional
+  // search rounds — proceed with whatever sources we have. If we got zero
+  // sources AND we are over the cap, the run is unsalvageable.
+  if (exceededWebSearchCap()) {
+    if (sources.length === 0) {
+      throw new Error(
+        `Web search cap exceeded ($${getWebSearchCost().toFixed(4)}) with zero sources gathered. ` +
+        `Cannot proceed.`,
+      );
+    }
+    console.warn(
+      `[research/search] WEB SEARCH CAP EXCEEDED ($${getWebSearchCost().toFixed(4)}). ` +
+      `Salvaging the ${sources.length} sources gathered so far. No further searches.`,
+    );
+  }
 
   // ── Stage 2: structure the narrative into typed candidates ────────────────
   // Wait briefly to avoid stacking against the per-minute rate limit. The

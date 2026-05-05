@@ -1,6 +1,83 @@
 # the-edit Next Steps
 
-Last updated: 2026-05-04 03:30 PM ET
+Last updated: 2026-05-05 (V1 image-loop plan committed)
+
+## Active V1 plan — every run under $2, includes images
+
+Six numbered steps in execution order. Step 0 has shipped as of this update; 5 → 3 → 4 → 1 → 2 are next.
+
+### Step 0 — Tighten cost caps (✓ shipped)
+
+- `MAGAZINE_HARD_CAP_USD=2` (was $25)
+- `MAGAZINE_BUDGET_USD=1.50` soft warning
+- `MAGAZINE_WEB_SEARCH_CAP_USD=1` (new) — when exceeded, research stops issuing further queries but **salvages whatever sources it already gathered**. Run only aborts if the cap is hit with zero sources.
+- `web_search_20260209` `max_uses` lowered from 5 to 3 — top 3 queries return ~25-30 sources, plenty for synthesis.
+- Web search cost now tracked separately via `recordWebSearchCost()`. Per-query fee counted ($0.01 × server_tool_use blocks), not per-source.
+
+### Step 5 — Wire `npm run publish` (next)
+
+- Add `src/scripts/publish.ts` that takes a `runId` and:
+  - reads the approved draft + (later) the variant picks
+  - calls `runPublish()` which writes the manifest into `magazine_issue_manifests`
+- Wire it as `npm run publish -- <runId>`
+- Closes the V1 backbone (research → ... → published manifest readable by the styleMeUp app)
+
+### Step 3 — Image executor (Gemini 2.5 Flash Image)
+
+- `src/executors/imagine.ts` — calls Gemini API, generates 4 variants per slot
+- 7 slots × 4 variants = 28 generated images per issue, ~$1.09 cost
+- Slot composition (locked):
+  | # | Slot | Subject |
+  |---|---|---|
+  | 1 | Cover start frame | hero garment, alone |
+  | 2 | Cover end frame | same garment, different angle |
+  | 3-5 | Trend cards 1-3 | one specific garment per card on void |
+  | 6-7 | Curator rotations | full outfit (top + bottom + shoes) |
+- Storage: Supabase bucket `magazine-assets/{runId}/{slotName}/{variantIdx}.png`
+- New table: `magazine_image_variants` linking variant URL → run + slot
+- Kling motion: **dropped from V1**. Cover treatment is `rendered_hero` (single static).
+
+### Step 4 — CLI variant picker
+
+- `npm run pick -- <runId>` — opens generated variants for review
+- macOS: spawns `open` with the 4-variant grid per slot, user types `1`-`4` to pick
+- Selections written to `magazine_issue_manifests.asset_paths` and the row marked ready-to-publish
+
+### Step 1 — Prompt caching (saves ~30%)
+
+- Add `cache_control: { type: 'ephemeral' }` to the static-by-run blocks: BRAND_PREAMBLE, DESIGN.md excerpts, full DESIGN.md in QA executor
+- QA cost drops from $0.11 → ~$0.02 after first cache write
+- Editor and research-search benefit too. Total run-to-run savings: 30-40%
+
+### Step 2 — Source archive + 292-source backfill
+
+- New table `magazine_search_archive(url, title, publisher, signal_type, trend_keywords, raw_snippet, first_seen_at, last_seen_at)`
+- Research executor checks archive before issuing a web search; if ≥ 15 fresh sources match the seed trend, **skip web search entirely**
+- One-time backfill script reads the failed run's stored sources and seeds the archive (recovers the 292 sources we already paid for)
+- Week-2+ research drops from $0.30 → ~$0.05
+
+## Cost projection across the plan
+
+| Phase | Research | QA | Other | Images | Web fees | Total |
+|---|---|---|---|---|---|---|
+| Today (post-Step 0, no images) | $0.20 | $0.11 | $0.10 | — | $0.03 | $0.44 |
+| After Step 3 (images live) | $0.20 | $0.11 | $0.10 | $1.09 | $0.03 | $1.53 |
+| After Step 1 (caching) | $0.10 | $0.02 | $0.04 | $1.09 | $0.03 | $1.28 |
+| After Step 2 (archive, week 2+) | $0.05 | $0.02 | $0.04 | $1.09 | $0.00 | $1.20 |
+
+All inside the $2 hard cap.
+
+## Open decisions
+
+- Does the variant picker live as a CLI (Step 4) or in the styleMeUp app's admin surface? CLI ships first; app surface is V2.
+- When does Kling come back? Tied to (a) reliable cost reduction and (b) buying the API.
+- Should the search archive deduplicate by URL alone, or also by content-hash to catch republished articles?
+
+## Track-level alignment with styleMeUp
+
+This repo is the implementation of Track B from the styleMeUp `NEXT_STEPS.md`. Track A (the Expo app) continues independently. The two repos share contract documents (`DESIGN.md`, `AGENTS.md`, `MAGAZINE_AGENT_SPEC.md`, `AI_ORCHESTRATION.md`) but no code.
+
+## Out of date below this line — kept for context until subsumed
 
 ## Current status
 

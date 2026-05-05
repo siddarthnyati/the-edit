@@ -1,5 +1,32 @@
 # the-edit Change Log
 
+## 2026-05-05 (Step 0: cost cap tightening + V1 plan locked)
+
+- Changed:
+  - Lowered hard cost cap from $25 → **$2** per run.
+  - Lowered soft budget from $4 → **$1.50** (warn-but-continue threshold).
+  - Added a separate **`MAGAZINE_WEB_SEARCH_CAP_USD=1`** that tracks web search query fees on its own axis, with a salvage path: when the cap is exceeded the research executor stops issuing further queries but proceeds with whatever sources it has already gathered. Run only aborts when the cap is hit AND zero sources were collected.
+  - Lowered `web_search_20260209` `max_uses` from 5 → **3**.
+  - Replaced the incorrect "$0.01 per source" web-search cost estimate with the correct "$0.01 per query" (counted via `server_tool_use` blocks in the response).
+  - Locked V1 plan: 0 → 5 (publish) → 3 (image executor) → 4 (CLI picker) → 1 (caching) → 2 (search archive). V1 includes images now — emitting prompts without rendering them was not a real V1.
+  - Updated `NEXT_STEPS.md` with the full ordered plan, slot composition table, and cost projections.
+- Why:
+  - The previous $25 cap was fire suppression, not a budget. After auditing the $10 console bill, web search-driven token bloat was the dominant cost driver, not the per-query fee. With `max_uses: 3` and a hard $2 total cap, runaway costs are now structurally prevented.
+  - Salvage-on-cap is the right behavior: dollars already spent should produce results, not an exit code.
+  - V1 with manual image generation isn't really V1. Adding the image executor + variant picker is now part of the V1 backbone, not V2.
+- Cost projection after each remaining step is tracked in `NEXT_STEPS.md`. Steady state with images + caching + archive: ~$1.20 per run.
+- Affected:
+  - `src/lib/cost.ts` (web search axis, salvage-friendly accessors)
+  - `src/executors/research.ts` (counts queries correctly, salvages on cap, max_uses=3)
+  - `.env.example` (new caps)
+  - `NEXT_STEPS.md` (plan rewrite)
+- Next:
+  - Step 5 — `npm run publish -- <runId>` to write the manifest after approval
+  - Step 3 — `src/executors/imagine.ts` calling Gemini 2.5 Flash Image, 4 variants × 7 slots
+  - Step 4 — `npm run pick -- <runId>` CLI for variant selection
+  - Step 1 — prompt caching on DESIGN.md and BRAND_PREAMBLE blocks
+  - Step 2 — search archive table + 292-source backfill
+
 ## 2026-05-04 09:30 PM ET
 
 - Changed:
