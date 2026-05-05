@@ -1,3 +1,4 @@
+import '../lib/env.js'; // must come first — loads .env with override semantics
 import { randomUUID } from 'crypto';
 import { persistStep } from '../lib/supabase.js';
 import { runResearch } from '../executors/research.js';
