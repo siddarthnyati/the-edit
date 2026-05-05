@@ -2,6 +2,7 @@ import { anthropic } from '@ai-sdk/anthropic';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { BRAND_PREAMBLE, designMd } from '../lib/context.js';
+import { recordCost } from '../lib/cost.js';
 import type { RankOutput } from './rank.js';
 import type { RunConfig } from '../orchestrator/types.js';
 
@@ -72,6 +73,7 @@ export async function runEdit(input: EditInput): Promise<EditOutput> {
   });
 
   const estimatedCostUsd = (usage.promptTokens * 0.000003) + (usage.completionTokens * 0.000015);
+  recordCost(estimatedCostUsd, 'edit');
   console.log(`[edit] ~$${estimatedCostUsd.toFixed(4)} | ${usage.promptTokens}p + ${usage.completionTokens}c tokens`);
 
   return object;

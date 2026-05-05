@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "draft": "tsx src/orchestrator/index.ts",
+    "inspect": "tsx src/scripts/inspect.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts"
   },

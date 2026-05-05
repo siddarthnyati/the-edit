@@ -1,6 +1,7 @@
 import '../lib/env.js'; // must come first — loads .env with override semantics
 import { randomUUID } from 'crypto';
 import { persistStep } from '../lib/supabase.js';
+import { startStep, getStepCost, getTotalCost, endStep } from '../lib/cost.js';
 import { runResearch } from '../executors/research.js';
 import { runRank } from '../executors/rank.js';
 import { runEdit } from '../executors/edit.js';
@@ -106,6 +107,7 @@ async function runStep<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const createdAt = new Date().toISOString();
+  startStep(step);
 
   await persistStep({
     runId: state.config.runId,
@@ -121,6 +123,9 @@ async function runStep<T>(
     console.log(`[${step}] starting…`);
     const output = await fn();
 
+    const stepCost = endStep();
+    state.totalCostUsd = getTotalCost();
+
     await persistStep({
       runId: state.config.runId,
       step,
@@ -128,6 +133,7 @@ async function runStep<T>(
       input: null,
       output,
       sources: [],
+      estimatedCostUsd: stepCost,
       createdAt,
       completedAt: new Date().toISOString(),
     });
@@ -136,6 +142,9 @@ async function runStep<T>(
     return output;
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
+    const stepCost = getStepCost(step);
+    state.totalCostUsd = getTotalCost();
+
     await persistStep({
       runId: state.config.runId,
       step,
@@ -143,12 +152,14 @@ async function runStep<T>(
       input: null,
       output: null,
       sources: [],
+      estimatedCostUsd: stepCost,
       error,
       createdAt,
       completedAt: new Date().toISOString(),
     });
 
     console.error(`[${step}] failed: ${error}`);
+    console.error(`[orchestrator] partial cost on ${step}: $${stepCost.toFixed(4)} | total so far: $${state.totalCostUsd.toFixed(4)}`);
     throw err;
   }
 }

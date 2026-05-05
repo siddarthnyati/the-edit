@@ -2,6 +2,7 @@ import { anthropic } from '@ai-sdk/anthropic';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { BRAND_PREAMBLE } from '../lib/context.js';
+import { recordCost } from '../lib/cost.js';
 import type { ResearchOutput } from './research.js';
 import type { RunConfig } from '../orchestrator/types.js';
 
@@ -58,6 +59,7 @@ export async function runRank(input: RankInput): Promise<RankOutput> {
   });
 
   const estimatedCostUsd = (usage.promptTokens * 0.000003) + (usage.completionTokens * 0.000015);
+  recordCost(estimatedCostUsd, 'rank');
   console.log(`[rank] ~$${estimatedCostUsd.toFixed(4)} | ${usage.promptTokens}p + ${usage.completionTokens}c tokens`);
 
   return object;

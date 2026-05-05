@@ -3,6 +3,7 @@ import { anthropic } from '@ai-sdk/anthropic';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { BRAND_PREAMBLE, designMd } from '../lib/context.js';
+import { recordCost } from '../lib/cost.js';
 import type { RunConfig, Source } from '../orchestrator/types.js';
 
 // ---------------------------------------------------------------------------
@@ -78,7 +79,9 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
 
   const stage1Cost =
     (searchResponse.usage.input_tokens * 0.000003) +
-    (searchResponse.usage.output_tokens * 0.000015);
+    (searchResponse.usage.output_tokens * 0.000015) +
+    (sources.length * 0.01); // web search: $10 per 1000 queries; conservatively count one query per source
+  recordCost(stage1Cost, 'research/search');
   console.log(
     `[research/search] ~$${stage1Cost.toFixed(4)} | ${sources.length} sources | ` +
     `${searchResponse.usage.input_tokens}p + ${searchResponse.usage.output_tokens}c tokens`,
@@ -109,6 +112,7 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
   });
 
   const stage2Cost = (usage.promptTokens * 0.000003) + (usage.completionTokens * 0.000015);
+  recordCost(stage2Cost, 'research/structure');
   console.log(`[research/structure] ~$${stage2Cost.toFixed(4)} | ${usage.promptTokens}p + ${usage.completionTokens}c tokens`);
 
   return { ...object, sources };
