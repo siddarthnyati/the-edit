@@ -1,5 +1,26 @@
 # the-edit Change Log
 
+## 2026-05-04 04:45 PM ET
+
+- Changed:
+  - Rewrote the research executor to actually hit the web instead of relying on model knowledge alone.
+  - Added `@anthropic-ai/sdk` as a direct dependency. The Vercel AI SDK provider (`@ai-sdk/anthropic` v1.2.12) does not expose Anthropic server-side tools yet, so the research stage uses the raw SDK.
+  - Two-stage research pipeline:
+    - Stage 1: raw Anthropic `messages.create` with the `web_search_20260209` tool. Returns grounded narrative text plus `web_search_tool_result` blocks.
+    - Stage 2: Vercel AI `generateObject` with a Zod schema converts the narrative into 2-5 typed `TrendCandidate` records.
+  - Source extraction reads URLs and titles directly from `web_search_tool_result` blocks. A small classifier maps publisher hostnames to the `signalType` enum (`editorial`, `runway`, `retail`, `resale`, `search`, etc.).
+- Why:
+  - Without web search the research executor would hallucinate, the QA executor would correctly reject it, and the pipeline would never produce an approvable issue. Web search is the smallest unblock.
+  - Two stages keep concerns clean: search returns prose with citations, structuring turns prose into typed records the orchestrator can validate.
+  - The newest server-side web search version (`web_search_20260209`) supports dynamic filtering, which is the right choice for trend research where most search results are noise.
+- Affected:
+  - `src/executors/research.ts` (significant rewrite)
+  - `package.json` (+ `@anthropic-ai/sdk`)
+  - `package-lock.json`
+- Next:
+  - try the first end-to-end `npm run draft` and observe real source quality
+  - tune the publisher → signalType classifier based on what real searches actually surface
+
 ## 2026-05-04 04:15 PM ET
 
 - Changed:

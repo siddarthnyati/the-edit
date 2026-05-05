@@ -33,7 +33,8 @@ If you are picking up this repo, read those four files before changing anything 
 ## Current Build State
 
 - Node + TypeScript strict, `exactOptionalPropertyTypes: true`.
-- Vercel AI SDK (`ai` v4 + `@ai-sdk/anthropic` v1) for model calls.
+- Vercel AI SDK (`ai` v4 + `@ai-sdk/anthropic` v1) for `generateObject` structured outputs.
+- Raw `@anthropic-ai/sdk` v0.93 for server-side tools (currently web search) that the AI SDK provider does not yet expose.
 - Zod for executor input/output schemas.
 - Supabase JS v2 for persistence.
 - `tsx` for running the orchestrator entry directly.
@@ -63,6 +64,7 @@ src/lib/context.ts          DESIGN.md and AGENTS.md loader, BRAND_PREAMBLE
 - One Kling motion asset per issue; all other assets are static Nano Banana.
 - Approval gate UX in V1 is a stdin pause. V2 will switch to Supabase records + webhook resume.
 - The publisher executor exists but is not yet wired into `npm run draft`. It will run from a separate `npm run publish -- --run-id <id>` command added next.
+- Research uses Anthropic's `web_search_20260209` server-side tool with citations. Two-stage pipeline: raw SDK web search → Vercel AI `generateObject` for structuring. We will add the AI SDK web-search helper later if/when it ships.
 
 ## Current Implementation Notes
 

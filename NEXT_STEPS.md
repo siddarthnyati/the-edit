@@ -30,13 +30,14 @@ Get one weekly run end-to-end in draft mode. No production publishing yet.
    - `SUPABASE_SERVICE_ROLE_KEY` (copy from drip project dashboard)
    - `SUPABASE_URL` is already set in `.env.example`
    - `STYLEMEUP_REPO_PATH` pointing at the local clone.
-2. Run `npm run draft` for the first time and capture what breaks.
+2. Run `npm run draft` for the first time and capture what breaks. The research executor now actually hits the web — first run will produce real grounded candidates.
 3. Replace the hard-coded `nextVolume()` (currently 19) with a Supabase query that reads `max(volume)` from `magazine_issue_manifests`.
 4. Implement a `npm run publish -- --run-id <id>` command that:
    - Loads the approved draft and asset paths.
    - Calls `runPublish()` to write the manifest.
-5. Decide whether asset upload (Nano Banana / Kling outputs) lives in this repo or stays manual.
-6. Decide whether the styleMeUp app reads issues from Supabase directly or via a separate StyleMeUp API.
+5. Tune the source publisher classifier in `research.ts` once we see what real `web_search_20260209` results look like — currently a hand-rolled allowlist of fashion publishers, may need broadening.
+6. Decide whether asset upload (Nano Banana / Kling outputs) lives in this repo or stays manual.
+7. Decide whether the styleMeUp app reads issues from Supabase directly or via a separate StyleMeUp API.
 
 ## Database state
 
