@@ -1,21 +1,71 @@
 # the-edit Next Steps
 
-Last updated: 2026-05-05
+Last updated: 2026-05-06 (post end-to-end V1 acid test)
 
-## V1 status: ✅ COMPLETE
+## V1 status: ✅ COMPLETE — verified end-to-end on run `12274d5e`
 
 ```
 draft → imagine → pick → publish
 ```
 
-All shipped. Gemini integration verified (smoke test 2026-05-05). All cost
-caps enforced ($2 hard / $1 web / $3 imagine).
-
-See `MODEL_HANDOFF.md` for run sequence + verified costs.
+Real run produced 40 generated images for $2.06 total. QA correctly
+flagged flat-lay violations that visually confirmed in `curator-1` output.
+See `MODEL_HANDOFF.md` for cost breakdown.
 
 ---
 
-## V2 — concrete steps in priority order
+## V2 — fixes from the acid test (priority order)
+
+### P0 — Constrain curator card count (prevent 2× cost runs)
+
+**Evidence:** Run 12274d5e emitted 6 curator card prompts instead of 2.
+Imagine generated 11 slots × 4 = 44 images for $1.56 instead of 7 × 4 =
+28 for $1.09. The schema doesn't enforce a max.
+
+Where: `src/executors/prompt.ts`
+
+```ts
+curatorCardPrompts: z.array(...).min(1).max(2)
+```
+
+Effort: 5 min.
+
+### P0 — Bake §8 (no flat-lays) into prompt executor system prompt
+
+**Evidence:** QA flagged flat-lays in 4 prompts on run `12274d5e`. The
+generated `curator-1` image is visually a flat-lay. Prompt executor needs
+hard rules in its system prompt + a Zod refine that rejects strings
+containing "flat-lay", "flat lay", "from above", "top-down", "laid flat".
+
+Where: `src/executors/prompt.ts` system + schema refine.
+
+Effort: 20 min.
+
+### P0 — Storage upload retry with backoff
+
+**Evidence:** Cover-end slot lost all 4 variants to Supabase Storage
+timeout on run 12274d5e while every other slot succeeded. Generation cost
+($0.16) wasted with no retry.
+
+Where: `src/executors/imagine.ts` — wrap `uploadVariant` in retry helper
+with 3 attempts × exponential backoff (1s, 4s, 16s).
+
+Effort: 30 min.
+
+### P0 — Cross-script cost cap (currently per-script only)
+
+**Evidence:** Total run hit $2.06, over the $2 hard cap, because cap state
+is in-memory per Node process. Draft script's $0.50 didn't propagate to
+imagine script's tracker. Each individually was under cap.
+
+Where: `src/lib/cost.ts` — read prior run's cumulative cost from Supabase
+on startup when `MAGAZINE_RUN_ID` is set, seed the in-memory totals.
+
+Effort: 30 min.
+
+---
+
+## V2 — feature work in priority order
 
 ### 1. Wire the styleMeUp Expo app to read manifests from Supabase
 
