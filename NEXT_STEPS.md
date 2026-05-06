@@ -1,146 +1,113 @@
 # the-edit Next Steps
 
-Last updated: 2026-05-05 (V1 image-loop plan committed)
+Last updated: 2026-05-05
 
-## V1 status — backbone complete, optimizations remaining
-
-Steps 0, 5, 3, 4 are shipped. The full V1 loop runs end-to-end:
+## V1 status: ✅ COMPLETE
 
 ```
-npm run draft                  # research → rank → edit → prompt → qa
-npm run imagine -- <runId>     # Gemini generates 4 × 7 = 28 variants
-npm run pick    -- <runId>     # macOS Quick Look picker, 1 winner per slot
-npm run publish -- <runId>     # writes manifest with picked asset paths
+draft → imagine → pick → publish
 ```
 
-Plus utilities: `npm run inspect` (list / dump runs), all costs persisted to Supabase.
+All shipped. Gemini integration verified (smoke test 2026-05-05). All cost
+caps enforced ($2 hard / $1 web / $3 imagine).
 
-### ✓ Step 0 — Tighten cost caps (shipped `f7d7aed`)
+See `MODEL_HANDOFF.md` for run sequence + verified costs.
 
-- `MAGAZINE_HARD_CAP_USD=2`, `MAGAZINE_BUDGET_USD=1.50`, `MAGAZINE_WEB_SEARCH_CAP_USD=1`
-- Salvage-on-cap: research stops issuing new queries when web cap hit, but proceeds with sources already gathered
-- `web_search_20260209` `max_uses: 3`
-- Per-query billing fixed (was per-source)
+---
 
-### ✓ Step 5 — Wire `npm run publish` (shipped `b6b2c6a`)
+## V2 — concrete steps in priority order
 
-- `src/scripts/publish.ts` reads research/edit/prompt outputs from a completed run, confirms QA approved, resolves next volume, calls `runPublish()` to write the manifest
+### 1. Wire the styleMeUp Expo app to read manifests from Supabase
 
-### ✓ Step 3 — Image executor (shipped `986b13b`)
+**Why first:** the-edit produces manifests but the app still reads
+`lib/magazineIssue.ts` (hard-coded Vol. 18 corduroy). Until this is wired,
+nothing the pipeline produces actually appears in the product.
 
-- New table `magazine_image_variants` + `magazine-assets` Supabase Storage bucket
-- `src/executors/imagine.ts` generates 4 variants per slot via Gemini 2.5 Flash Image, uploads to Storage, indexes in DB
-- `npm run imagine -- <runId>`
-- Slot composition (locked): cover-start, cover-end, trend-1..3, curator-1..2
+Where: `styleMeUp` repo (not the-edit).
 
-### ✓ Step 4 — CLI variant picker (shipped `72fa6ee`)
+Concrete tasks:
+- [ ] Install `@supabase/supabase-js` in styleMeUp Expo app
+- [ ] Add `lib/supabase.ts` with anon-key client (read-only via signed URLs)
+- [ ] Replace `lib/magazineIssue.ts` static export with a query: `select * from magazine_issue_manifests order by volume desc limit 1`
+- [ ] Use `supabase.storage.from('magazine-assets').createSignedUrl(path, 3600)` for asset URLs
+- [ ] Update `screens/Discover/Discover.tsx` to consume manifest shape
+- [ ] Test cold-load + offline fallback to last cached manifest
 
-- `npm run pick -- <runId>` downloads variants, opens in `qlmanage -p`, you press 1-4 (or s to skip / q to quit)
-- Pick clears any prior pick on the same slot — fully re-runnable
-- Publish script now reads picked variants instead of placeholder paths and refuses to publish until all 7 slots have a winner
+Effort: 3-4 hours. No new infra needed — drip Supabase already has the data.
 
-### ✓ Step 1 — Prompt caching (shipped `d3da646`)
+### 2. Bake asset-tool-name ban into the prompt executor
 
-- QA: `providerOptions.anthropic.cacheControl: { type: 'ephemeral' }` on full DESIGN.md content part. Cost drops $0.11 → $0.02 from run 2 onward.
-- Research/search: `cache_control` on system array. ~30% reduction on repeat calls.
-- Editor skipped (~600 token cached content, below Sonnet's 2048 cache minimum).
+**Why:** QA caught "Nano Banana" / "Kling" leaks on the first real run.
+Wasted a $0.11 QA round catching what should be a hard rule.
 
-### ✓ Step 2 — Source archive (shipped this commit)
+Where: `the-edit/src/executors/prompt.ts`.
 
-- `magazine_search_archive` table created with GIN index on `trend_keywords`.
-- `src/lib/archive.ts`: `archiveSources()` upsert + `findFreshSources()` query.
-- Research executor checks archive first; skips web search entirely when ≥15 fresh sources match.
-- Sources persisted *before* stage 2 — stage 2 failures no longer lose paid-for searches.
-- `npm run backfill-archive` recovered 47 sources from prior successful run. (The 292-source run failed at stage 2 before the new archive write logic existed, so those are not recoverable.)
+Concrete:
+- [ ] Add to system prompt: "Never name the asset generation tool (Gemini, Nano Banana, Imagen, Kling, etc.) in any prompt or alt text. Describe the desired image directly."
+- [ ] Add a Zod refine on `AssetPromptSuiteSchema` that rejects strings containing those tokens
+- [ ] Re-test with `npm run draft`
 
-## V2 candidates (unprioritized)
+Effort: 30 min.
 
-- **In-app variant picker.** Replace `npm run pick` CLI with an admin-gated screen in the styleMeUp app.
-- **Bake the asset-tool-name ban into the prompt executor's system prompt.** QA had to catch "Nano Banana" / "Kling" leaks on the first real run. Should be a hard rule for the prompt executor.
-- **Kling motion.** Once base costs are stable and Kling API is purchased.
-- **Scheduled runs.** Cron / GitHub Actions to run the pipeline weekly without manual kickoff.
-- **Issue archive in the app.** styleMeUp Discover should show prior issues, not just the latest.
+### 3. Build the in-app variant picker (Vercel admin app)
 
-## Cost projection across the plan
+**Why:** CLI picker requires being at the laptop with macOS Quick Look.
+A web admin app means picking from anywhere, with thumbnails alongside
+the prompt + alt text for context.
 
-| Phase | Research | QA | Other | Images | Web fees | Total |
-|---|---|---|---|---|---|---|
-| Today (post-Step 0, no images) | $0.20 | $0.11 | $0.10 | — | $0.03 | $0.44 |
-| After Step 3 (images live) | $0.20 | $0.11 | $0.10 | $1.09 | $0.03 | $1.53 |
-| After Step 1 (caching) | $0.10 | $0.02 | $0.04 | $1.09 | $0.03 | $1.28 |
-| After Step 2 (archive, week 2+) | $0.05 | $0.02 | $0.04 | $1.09 | $0.00 | $1.20 |
+Where: new directory `the-edit/apps/admin/` (Next.js, deploy to Vercel).
 
-All inside the $2 hard cap.
+Concrete:
+- [ ] `apps/admin/` Next.js scaffold
+- [ ] Supabase Auth with email allowlist (just sidd.nyati96@gmail.com)
+- [ ] `/runs` — list runs from `magazine_run_steps` grouped by run_id
+- [ ] `/runs/[runId]/pick` — 7 slots × 4 thumbnails, click to set `picked=true`
+- [ ] `/api/sign-url` — server-side signed URL generation for the magazine-assets bucket
+- [ ] Deploy to Vercel under custom domain or `the-edit-admin.vercel.app`
 
-## Open decisions
+Effort: 6-8 hours. ~250-400 lines of code.
 
-- Does the variant picker live as a CLI (Step 4) or in the styleMeUp app's admin surface? CLI ships first; app surface is V2.
-- When does Kling come back? Tied to (a) reliable cost reduction and (b) buying the API.
-- Should the search archive deduplicate by URL alone, or also by content-hash to catch republished articles?
+### 4. Scheduled weekly run
 
-## Track-level alignment with styleMeUp
+**Why:** the whole point is one issue per week without manual kickoff.
 
-This repo is the implementation of Track B from the styleMeUp `NEXT_STEPS.md`. Track A (the Expo app) continues independently. The two repos share contract documents (`DESIGN.md`, `AGENTS.md`, `MAGAZINE_AGENT_SPEC.md`, `AI_ORCHESTRATION.md`) but no code.
+Where: GitHub Actions or Vercel Cron in the-edit repo.
 
-## Out of date below this line — kept for context until subsumed
+Concrete:
+- [ ] `.github/workflows/weekly-draft.yml` — cron `0 14 * * 0` (Sunday 2pm ET)
+- [ ] Job runs `npm run draft` with `MAGAZINE_AUTO_APPROVE=false` — gates surface as GitHub issue comments awaiting approval
+- [ ] On approval (label or comment), trigger `npm run imagine` then notify Sid
+- [ ] Sid runs `npm run pick` locally, then `npm run publish` from CLI
 
-## Current status
+Effort: 2-3 hours.
 
-`the-edit` is the Magazine Weekly orchestration pipeline for StyleMeUp. The repo was bootstrapped from the `MAGAZINE_AGENT_SPEC.md` and `AI_ORCHESTRATION.md` contracts in the styleMeUp repo. The full executor scaffold compiles clean and is pushed to `main`. Nothing has run end-to-end yet — Supabase tables, env keys, and the first real research step still need to be wired.
+### 5. Kling motion (deferred from V1)
 
-## Completed since last update
+**Why:** Magazine issue benefits from a 5s motion cover. Currently using
+two static frames as a scroll sequence.
 
-- Initialized the repo with TypeScript strict mode and `exactOptionalPropertyTypes`.
-- Wrote the deterministic orchestrator entrypoint with three approval gates (trend winner, issue draft, publish).
-- Wrote stubs for all six executors using Vercel AI `generateObject` + Zod structured outputs:
-  - research, rank, edit, prompt, qa, publish
-- Modeled the Supabase persist layer for run steps and issue manifests.
-- Wrote the `BRAND_PREAMBLE` and the styleMeUp context loader.
-- Established documentation discipline matching the styleMeUp repo:
-  - `NEXT_STEPS.md` is the living execution plan
-  - `CHANGE_LOG.md` is the dated history
-  - `MODEL_HANDOFF.md` is the compact handoff document
+Concrete:
+- [ ] Purchase Kling API access
+- [ ] Add `MAGAZINE_KLING_CAP_USD` env (default $1)
+- [ ] Add `coverMotion` slot to `imagine.ts` calling Kling instead of Gemini
+- [ ] Update prompt executor to emit motion direction without naming Kling
+- [ ] Update manifest `coverTreatment` to `scroll_sequence`
 
-## Current focus
+Effort: 3-4 hours after API access is in hand.
 
-Get one weekly run end-to-end in draft mode. No production publishing yet.
+---
 
-## Next steps
+## Things to monitor
 
-1. Configure `.env` locally with:
-   - `ANTHROPIC_API_KEY`
-   - `SUPABASE_SERVICE_ROLE_KEY` (copy from drip project dashboard)
-   - `SUPABASE_URL` is already set in `.env.example`
-   - `STYLEMEUP_REPO_PATH` pointing at the local clone.
-2. Run `npm run draft` for the first time and capture what breaks. The research executor now actually hits the web — first run will produce real grounded candidates.
-3. Replace the hard-coded `nextVolume()` (currently 19) with a Supabase query that reads `max(volume)` from `magazine_issue_manifests`.
-4. Implement a `npm run publish -- --run-id <id>` command that:
-   - Loads the approved draft and asset paths.
-   - Calls `runPublish()` to write the manifest.
-5. Tune the source publisher classifier in `research.ts` once we see what real `web_search_20260209` results look like — currently a hand-rolled allowlist of fashion publishers, may need broadening.
-6. Decide whether asset upload (Nano Banana / Kling outputs) lives in this repo or stays manual.
-7. Decide whether the styleMeUp app reads issues from Supabase directly or via a separate StyleMeUp API.
+- **First QA run after caching change** — verify `cache-read:21000` appears in the qa cost log line. If not, cache isn't firing.
+- **First archive hit run** — once 7+ days have passed since first archive write, run `npm run draft` with a seed trend that matches existing archive keywords. Should see `[research/archive] HIT` and skip web search.
+- **Cumulative drip Supabase usage** — drip is on free tier. If we run weekly, growth is small but watch storage (each run = 28 × ~800KB ≈ 22 MB, plus row growth).
 
-## Database state
+---
 
-The `drip` Supabase project (id `bocvtwwmqphfnwmzdjcc`, us-east-2) is shared between this repo and styleMeUp. Naming convention:
+## Things explicitly NOT in V2 scope
 
-- `magazine_*` — owned by the-edit (writes via service role only)
-- `app_*` — reserved for styleMeUp app tables (not yet created)
-
-Current tables: `magazine_run_steps`, `magazine_issue_manifests`. Both RLS-enabled with no policies, anon/authenticated grants revoked. Service role only.
-
-Legacy Prisma tables from a prior styleMeUp iteration (`User`, `WardrobeItem`, etc.) were dropped on 2026-05-04 — they were empty and incompatible with the current Expo app architecture.
-
-## Track-level alignment with styleMeUp
-
-This repo is the implementation of Track B from the styleMeUp `NEXT_STEPS.md`. Track A continues independently in the styleMeUp repo. The two repos do not share code yet — they share contract documents.
-
-## Blockers and open decisions
-
-- Supabase tables do not exist yet.
-- The research executor is currently model-only and will hallucinate without real source packets. We need to decide whether V1 starts from manual source packets or live APIs (this question is also open in `AI_ORCHESTRATION.md`).
-- The publisher executor is written but not yet invoked from the orchestrator. The `npm run publish` command needs to be added.
-- Volume number persistence is not yet wired — Supabase query needed.
-- No model evals exist yet. Per `AI_ORCHESTRATION.md`, evals are required before this becomes production.
-- Asset upload workflow is out of scope for V1 but needs a decision before V2.
+- Multi-issue archive view in the app (V3)
+- Automated Kling video review (V3 — humans review motion)
+- Multi-language support (out of brand for now)
+- Personalized issues per user (out of scope per `AI_ORCHESTRATION.md`)

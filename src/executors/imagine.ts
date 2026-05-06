@@ -1,6 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { supabase } from '../lib/supabase.js';
-import { recordCost } from '../lib/cost.js';
+import { recordImagineCost, exceededImagineCap, getImagineCost, getImagineCap } from '../lib/cost.js';
 import type { PromptOutput } from './prompt.js';
 
 // Generates N variants per slot using Gemini 2.5 Flash Image (Nano Banana).
@@ -10,7 +10,7 @@ import type { PromptOutput } from './prompt.js';
 
 const VARIANTS_PER_SLOT = parseInt(process.env['MAGAZINE_VARIANTS_PER_SLOT'] ?? '4', 10);
 const COST_PER_IMAGE_USD = 0.039;
-const MODEL = 'gemini-2.5-flash-image-preview';
+const MODEL = 'gemini-2.5-flash-image';
 const BUCKET = 'magazine-assets';
 
 const apiKey = process.env['GEMINI_API_KEY'];
@@ -122,6 +122,15 @@ export async function runImagine(input: ImagineInput): Promise<ImagineOutput> {
   const slotsGenerated: string[] = [];
 
   for (const job of jobs) {
+    if (exceededImagineCap()) {
+      console.warn(
+        `[imagine] CAP EXCEEDED ($${getImagineCost().toFixed(4)} > $${getImagineCap().toFixed(2)}). ` +
+        `Stopping with ${slotsGenerated.length}/${jobs.length} slots done. ` +
+        `Variants for completed slots are in the DB; re-run later or pick from what exists.`,
+      );
+      break;
+    }
+
     console.log(`[imagine] slot '${job.slot}'…`);
 
     // Generate variants for this slot in parallel — Gemini handles concurrent
@@ -145,7 +154,7 @@ export async function runImagine(input: ImagineInput): Promise<ImagineOutput> {
     const failed = completed.length - succeeded;
 
     actualCost += succeeded * COST_PER_IMAGE_USD;
-    recordCost(succeeded * COST_PER_IMAGE_USD, `imagine/${job.slot}`);
+    recordImagineCost(succeeded * COST_PER_IMAGE_USD);
 
     slotsGenerated.push(job.slot);
 

@@ -12,12 +12,14 @@
 
 let totalUsd = 0;
 let webSearchUsd = 0;
+let imagineUsd = 0;
 let perStepUsd: Record<string, number> = {};
 let currentStep: string | null = null;
 
 const HARD_CAP_USD = parseFloat(process.env['MAGAZINE_HARD_CAP_USD'] ?? '2');
 const BUDGET_USD = parseFloat(process.env['MAGAZINE_BUDGET_USD'] ?? '1.5');
 const WEB_SEARCH_CAP_USD = parseFloat(process.env['MAGAZINE_WEB_SEARCH_CAP_USD'] ?? '1');
+const IMAGINE_CAP_USD = parseFloat(process.env['MAGAZINE_IMAGINE_CAP_USD'] ?? '3');
 
 export function startStep(label: string) {
   currentStep = label;
@@ -61,6 +63,34 @@ export function getWebSearchCost(): number {
   return webSearchUsd;
 }
 
+// Gemini image generation has its own per-run cap. The imagine executor
+// checks this between slots and aborts if exceeded — partial results stay
+// in the variants table for whatever slots have already been generated.
+export function recordImagineCost(usd: number) {
+  imagineUsd += usd;
+  totalUsd += usd;
+  if (currentStep) perStepUsd[currentStep] = (perStepUsd[currentStep] ?? 0) + usd;
+
+  if (totalUsd > HARD_CAP_USD) {
+    throw new Error(
+      `HARD COST CAP EXCEEDED: $${totalUsd.toFixed(4)} > $${HARD_CAP_USD.toFixed(2)}. ` +
+      `Aborting run.`,
+    );
+  }
+}
+
+export function exceededImagineCap(): boolean {
+  return imagineUsd > IMAGINE_CAP_USD;
+}
+
+export function getImagineCost(): number {
+  return imagineUsd;
+}
+
+export function getImagineCap(): number {
+  return IMAGINE_CAP_USD;
+}
+
 export function getStepCost(label: string): number {
   return perStepUsd[label] ?? 0;
 }
@@ -79,6 +109,7 @@ export function endStep(): number {
 export function resetCostTracker() {
   totalUsd = 0;
   webSearchUsd = 0;
+  imagineUsd = 0;
   perStepUsd = {};
   currentStep = null;
 }

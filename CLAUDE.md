@@ -1,53 +1,93 @@
 # CLAUDE.md — the-edit
 
-This repo is the Magazine Weekly orchestration pipeline for StyleMeUp.
+Magazine Weekly orchestration pipeline for StyleMeUp. The deterministic
+TypeScript orchestrator runs six executors against Anthropic + Gemini +
+Supabase (`drip` project, `bocvtwwmqphfnwmzdjcc`).
 
-## Contract documents
+## Read these first (in order)
 
-The source of truth lives in the styleMeUp repo:
+1. `MODEL_HANDOFF.md` — current state, costs, V1 status
+2. `NEXT_STEPS.md` — concrete queue
+3. `../styleMeUp/DESIGN.md` §4 (bans) and §11 (motion)
+4. `../styleMeUp/MAGAZINE_AGENT_SPEC.md` — pipeline spec
+5. `CHANGE_LOG.md` only if you need history
 
-- `DESIGN.md` — brand bible. All copy and asset rules come from here.
-- `AGENTS.md` — engineering conventions.
-- `MAGAZINE_AGENT_SPEC.md` — this pipeline's full spec.
-- `AI_ORCHESTRATION.md` — orchestrator/executor pattern and safety rules.
+## V1 pipeline (all wired)
 
-Do not re-derive rules that are already written there. Load and cite them.
+```
+npm run draft                 # research → rank → edit → prompt → qa
+npm run imagine -- <runId>    # Gemini gemini-2.5-flash-image, 4 × 7 = 28 variants
+npm run pick    -- <runId>    # macOS Quick Look picker
+npm run publish -- <runId>    # writes magazine_issue_manifests row
+npm run inspect               # list / dump runs
+npm run backfill-archive      # one-time recovery from prior runs
+```
+
+## Hard rules
+
+- Orchestrator is code, not an LLM. Never let a model decide flow, spend, or publish.
+- Three approval gates (trend, draft, publish) require human input unless
+  `MAGAZINE_AUTO_APPROVE=true` (smoke tests only).
+- Cost caps enforced by `src/lib/cost.ts`:
+  - `MAGAZINE_HARD_CAP_USD=2` total per run
+  - `MAGAZINE_WEB_SEARCH_CAP_USD=1` with salvage-on-cap
+  - `MAGAZINE_IMAGINE_CAP_USD=3` per run
+- All keys server-side. Expo client never sees them.
+- `web_search_20260209` capped at `max_uses: 3`.
 
 ## Architecture
 
 ```
-src/orchestrator/index.ts   — deterministic sequencer, owns all gates
-src/orchestrator/types.ts   — shared types (MagazineRunStep, MagazineIssueManifest)
-src/executors/research.ts   — trend research
-src/executors/rank.ts       — trend scoring and winner selection
-src/executors/edit.ts       — Magazine copy draft
-src/executors/prompt.ts     — Nano Banana + Kling asset prompt suite
-src/executors/qa.ts         — brand, source, and cost QA
-src/executors/publish.ts    — manifest assembly and Supabase write
-src/lib/supabase.ts         — Supabase client and persist helpers
-src/lib/context.ts          — DESIGN.md / AGENTS.md loader
+src/orchestrator/index.ts   sequencer + approval gates
+src/orchestrator/types.ts   shared types (RunStep, Manifest, RunConfig)
+
+src/executors/research.ts   web search → archive write-back → structure
+src/executors/rank.ts       score + pick winner + 3 story angles
+src/executors/edit.ts       Magazine copy draft
+src/executors/prompt.ts     Nano Banana + (deferred) Kling prompt suite
+src/executors/qa.ts         Vogue test, §4 bans, source grounding
+src/executors/imagine.ts    Gemini variant generation, 4 per slot
+src/executors/publish.ts    manifest assembly, Supabase write
+
+src/scripts/*.ts            CLI entries (draft via orchestrator/index.ts)
+src/lib/env.ts              dotenv with override + drop inherited vars
+src/lib/cost.ts             three-axis cost tracking with caps
+src/lib/supabase.ts         persist helpers
+src/lib/archive.ts          search archive query + upsert
+src/lib/context.ts          DESIGN.md / AGENTS.md loader, BRAND_PREAMBLE
 ```
 
-## Rules
+## Database (Supabase project: drip / `bocvtwwmqphfnwmzdjcc`)
 
-- The orchestrator is TypeScript code, not an LLM. Never let a model decide flow, spend, or publish.
-- Executors return structured outputs via Zod schemas. Validate before passing to the next step.
-- Every step is persisted to Supabase before and after execution.
-- Three approval gates: trend winner, issue draft, publish. All three require Sid.
-- No autonomous publish in V1.
-- No client-side provider keys. No service-role key in the app.
-- All editorial copy must pass the Vogue test and DESIGN.md §4 bans.
+| Table | Owned by | Purpose |
+|---|---|---|
+| `magazine_run_steps` | the-edit | Every executor step persisted (input, output, sources, cost) |
+| `magazine_issue_manifests` | the-edit | Approved + published issues. App reads via backend |
+| `magazine_image_variants` | the-edit | 4-per-slot Gemini outputs. `picked=true` after `npm run pick` |
+| `magazine_search_archive` | the-edit | Cross-run source memory. Skip web search when fresh |
 
-## Running
+Storage bucket: `magazine-assets` — variants at `{runId}/{slot}/{idx}.png`.
 
-```bash
-cp .env.example .env   # fill in keys
-npm install
-npm run draft          # runs research → rank → edit → prompt → qa
-                       # pauses at approval gates
-```
+All RLS-enabled, service-role only.
 
-## Open decisions
+## Slot schema
 
-See `AI_ORCHESTRATION.md` § Open Decisions for the live list.
-`nextVolume()` in `src/orchestrator/index.ts` is hard-coded to 19 — wire to Supabase after first publish.
+7 slots × 4 variants per issue:
+- `cover-start` — hero garment, alone, void background
+- `cover-end` — same garment, different angle/state
+- `trend-1`, `trend-2`, `trend-3` — single garment per card on void
+- `curator-1`, `curator-2` — full styled outfits (top + bottom + shoes)
+
+Kling motion deferred to V2.
+
+## Costs (steady-state per run)
+
+- Week 1 fresh trend: ~$1.60
+- Week 2+ archive hit: ~$1.20
+- Hard cap: $2 total, $1 web-search, $3 imagine
+
+## Skipped on purpose
+
+- Editor caching (~600 token prefix below 2048-token cache minimum)
+- Inline image generation in Magazine pipeline (we use Gemini, not Anthropic)
+- Auto-pick (always human)

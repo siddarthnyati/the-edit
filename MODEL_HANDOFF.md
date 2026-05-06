@@ -1,149 +1,93 @@
 # the-edit Model Handoff
 
-Status: living context for any model continuing the work on this repo.
-Last updated: 2026-05-05 (V1 image-loop plan committed; Step 0 shipped)
+Last updated: 2026-05-05 (V1 complete, Gemini cap added, smoke-test passed)
 
-## V1 status — COMPLETE
+## What this repo is
 
-The full V1 loop is wired end-to-end with caching and archive optimizations:
+Magazine Weekly orchestration pipeline for StyleMeUp. Researches → ranks
+→ writes → generates 28 image variants → human picks → publishes manifest
+to Supabase. Anthropic for editorial + QA, Gemini Nano Banana for images.
 
-```
-npm run draft                  # research → rank → edit → prompt → qa
-npm run imagine -- <runId>     # Gemini generates 4 × 7 = 28 variants
-npm run pick    -- <runId>     # macOS Quick Look picker, 1 per slot
-npm run publish -- <runId>     # writes manifest with picked asset paths
-```
+## V1 status: COMPLETE and verified
 
-Utilities: `npm run inspect` (list / dump runs), `npm run backfill-archive` (recover prior sources).
+Real run from 2026-05-04 produced approved draft with QA `revise` correctly
+catching: Vogue-test failures, ungrounded Lacoste/Prada SS26 claims,
+"Nano Banana" / "Kling" tool name leaks, WCAG alt-text issues.
 
-- ✅ **Step 0** (`f7d7aed`) — caps $2/$1.50/$1 with salvage-on-cap
-- ✅ **Step 5** (`b6b2c6a`) — publish CLI
-- ✅ **Step 3** (`986b13b`) — imagine executor (Gemini 2.5 Flash Image)
-- ✅ **Step 4** (`72fa6ee`) — variant picker CLI
-- ✅ **Step 1** (`d3da646`) — prompt caching on QA + research/search
-- ✅ **Step 2** (current) — search archive + backfill (47 sources recovered)
+Gemini smoke test 2026-05-05: 808KB image in 4.5s, on-brand black turtleneck on void.
 
-Slot composition (locked):
-1. Cover start — hero garment alone
-2. Cover end — same garment, different angle
-3-5. Trend cards (3) — one specific garment per card on void
-6-7. Curator rotations (2) — full outfit (top + bottom + shoes) on void
-
-Steady-state cost target with caching + archive: **~$1.20 per run**.
-Today (no caching, no archive): ~$1.60 per run.
-Hard cap: $2 per run. Web search alone capped at $1.
-
-Kling motion is **dropped from V1** — manifest has empty `coverMotion` and `coverFrames`. `coverStart` + `coverEnd` provide the cover.
-
-## How to run end-to-end (cold start)
+## Run sequence (production)
 
 ```bash
 cd /Users/siddarthnyati/the-edit
-
-# .env must have ANTHROPIC_API_KEY, GEMINI_API_KEY, SUPABASE_URL,
-# SUPABASE_SERVICE_ROLE_KEY, STYLEMEUP_REPO_PATH
-
-npm run draft                                 # ~$0.50, ~3-5 min
-npm run inspect                               # see the runId
-npm run imagine -- <runId>                    # ~$1.10, ~2-3 min
-npm run pick -- <runId>                       # interactive, ~5 min
-npm run publish -- <runId>                    # writes manifest row
+npm run draft                  # ~$0.50, 3-5 min, pauses at gates
+npm run inspect                # find runId
+npm run imagine -- <runId>     # ~$1.10, 2-3 min, generates 28 images
+npm run pick    -- <runId>     # macOS Quick Look, type 1-4 per slot
+npm run publish -- <runId>     # writes magazine_issue_manifests row
 ```
 
-`MAGAZINE_AUTO_APPROVE=true` env flag skips the orchestrator's approval-gate stdin pauses for smoke tests only.
+For unattended smoke tests: `MAGAZINE_AUTO_APPROVE=true npm run draft`.
 
-## Product Frame
+## Costs (verified on 2026-05-04 successful run)
 
-`the-edit` is the Magazine Weekly orchestration pipeline for StyleMeUp. It produces one editorial Magazine issue per week and stops at human approval before publishing.
+| Stage | Real cost | Notes |
+|---|---|---|
+| research/search | $0.247 | 47 sources, 5 queries (now capped at 3) |
+| research/structure | $0.027 | 25s wait avoids rate limit |
+| rank | $0.025 | |
+| edit | $0.031 | DESIGN.md §4 excerpt |
+| prompt | $0.040 | Asset prompt suite |
+| qa | $0.109 | Full DESIGN.md (will drop to $0.02 with cache) |
+| **draft total** | **$0.479** | |
+| imagine (28 images) | $1.092 | After Step 3 ships images |
+| **issue total** | **~$1.57** | First run, no cache hits |
+| **steady state** | **~$1.20** | After cache + archive hits |
 
-The orchestrator is deterministic TypeScript. Executors are narrow Anthropic Claude calls returning Zod-validated structured outputs. Supabase stores run state, sources, costs, and manifests.
+Hard caps: total $2, web search $1, imagine $3.
 
-This repo never runs in the Expo app. The app reads published manifests, never raw model output.
-
-## Contract documents (in the styleMeUp repo)
-
-- `DESIGN.md` — brand bible. Every line of copy and asset rule comes from here.
-- `AGENTS.md` — engineering conventions.
-- `MAGAZINE_AGENT_SPEC.md` — full pipeline spec, including the workflow, cost policy, approval gates, and stored run record shape.
-- `AI_ORCHESTRATION.md` — orchestrator vs executor pattern, safety rules, and open decisions.
-
-If you are picking up this repo, read those four files before changing anything in `src/`.
-
-## Workflow Docs (in this repo)
-
-- `NEXT_STEPS.md` — living execution plan. Always check first.
-- `CHANGE_LOG.md` — dated history of changes, decisions, and follow-up implications.
-- `MODEL_HANDOFF.md` — this file. Keep compact.
-- Before every push or handoff:
-  - confirm work is reflected in `CHANGE_LOG.md`
-  - update `NEXT_STEPS.md` to match new truth
-  - refresh this file if the project state meaningfully changed
-
-## Current Build State
-
-- Node + TypeScript strict, `exactOptionalPropertyTypes: true`.
-- Vercel AI SDK (`ai` v4 + `@ai-sdk/anthropic` v1) for `generateObject` structured outputs.
-- Raw `@anthropic-ai/sdk` v0.93 for server-side tools (currently web search) that the AI SDK provider does not yet expose.
-- Zod for executor input/output schemas.
-- Supabase JS v2 for persistence.
-- `tsx` for running the orchestrator entry directly.
-
-## Architecture
+## Database (Supabase: drip / `bocvtwwmqphfnwmzdjcc`)
 
 ```
-src/orchestrator/index.ts   deterministic sequencer, approval gates, env reading
-src/orchestrator/types.ts   shared types
-src/executors/research.ts   2-5 trend candidates with sources
-src/executors/rank.ts       scores and picks one winner with three story angles
-src/executors/edit.ts       Magazine copy draft
-src/executors/prompt.ts     Nano Banana + Kling asset prompt suite
-src/executors/qa.ts         Vogue test + §4 bans + cost + grounding check
-src/executors/publish.ts    manifest assembly and Supabase write
-src/lib/supabase.ts         createClient + persistStep + persistManifest
-src/lib/context.ts          DESIGN.md and AGENTS.md loader, BRAND_PREAMBLE
+magazine_run_steps           one row per (runId, step)
+magazine_issue_manifests     approved/published issues
+magazine_image_variants      4 variants per slot per run
+magazine_search_archive      cross-run source memory (47 rows after backfill)
 ```
 
-## Major Decisions So Far
+Storage bucket `magazine-assets`: `{runId}/{slot}/{idx}.png`.
 
-- Repo name: `the-edit`. Sits next to the styleMeUp app repo, not inside it.
-- All provider keys are server-side. The Expo client never sees them.
-- Three human approval gates: trend winner, issue draft, publish.
-- Model routing via env vars (`MAGAZINE_RESEARCH_MODEL`, `MAGAZINE_EDITOR_MODEL`, `MAGAZINE_QA_MODEL`, `MAGAZINE_RANK_MODEL`, `MAGAZINE_PROMPT_MODEL`). Default is `claude-sonnet-4-6` for all.
-- Default weekly budget: $4.00. QA executor checks total cost against this ceiling.
-- One Kling motion asset per issue; all other assets are static Nano Banana.
-- Approval gate UX in V1 is a stdin pause. V2 will switch to Supabase records + webhook resume.
-- The publisher executor exists but is not yet wired into `npm run draft`. It will run from a separate `npm run publish -- --run-id <id>` command added next.
-- Research uses Anthropic's `web_search_20260209` server-side tool with citations. Two-stage pipeline: raw SDK web search → Vercel AI `generateObject` for structuring. We will add the AI SDK web-search helper later if/when it ships.
+All service-role only.
 
-## Current Implementation Notes
+## Stack
 
-- `BRAND_PREAMBLE` in `src/lib/context.ts` is the compact system prompt prefix used by every executor. The full `DESIGN.md` is only loaded by the QA executor (where strict ban enforcement matters most).
-- `extractSection()` in `src/executors/edit.ts` is a simple substring slice. If `DESIGN.md` section markers ever change, this will need a real parser.
-- `nextVolume()` in `src/orchestrator/index.ts` is hard-coded to 19. Replace with a Supabase query before the second real run.
-- The orchestrator's `runStep()` helper persists every step twice — once at start (status=running) and once at finish (status=complete or failed). Supabase `onConflict: 'run_id,step'` makes this idempotent.
-- Costs are computed per-executor using a placeholder rate of $3/M input + $15/M output. Replace with actual model pricing when a routing decision is finalized.
+- Node 20+ TypeScript strict, `exactOptionalPropertyTypes: true`
+- Vercel AI SDK v4 + `@ai-sdk/anthropic` v1 for `generateObject`
+- Raw `@anthropic-ai/sdk` v0.93 for web search (server-side tool)
+- `@google/genai` v1.52 for Gemini image generation
+- `@supabase/supabase-js` v2 for persistence + storage
+- `zod` for executor schemas
+- `tsx` runtime, `dotenv` with override semantics
 
-## Database
+## Key architectural decisions
 
-`drip` Supabase project (id `bocvtwwmqphfnwmzdjcc`, region us-east-2) is shared between this repo and styleMeUp.
+1. **Two-stage research** — Anthropic web search returns prose + citations, then `generateObject` structures into `TrendCandidate[]`. Stage 2 has a 25s wait to avoid the 30K input-tokens-per-minute rate limit.
+2. **Salvage-on-cap** — when `MAGAZINE_WEB_SEARCH_CAP_USD` is exceeded, research stops issuing new queries but uses sources already gathered.
+3. **Archive write before stage 2** — sources persisted before stage 2's wait, so a stage-2 failure no longer loses paid-for searches.
+4. **Cache prefix in QA** — full DESIGN.md (~21K tokens) wrapped in `providerOptions.anthropic.cacheControl: { type: 'ephemeral' }`. From run 2 onward, reads at 0.1× rate.
+5. **Approval gates pause stdin** — `MAGAZINE_AUTO_APPROVE=true` flag for smoke tests only.
+6. **Image generation outsourced to Gemini** — Anthropic doesn't generate images. Pipeline emits prompts; the imagine executor calls Gemini Nano Banana (`gemini-2.5-flash-image`).
+7. **Picker is CLI for V1** — `npm run pick` opens macOS Quick Look. V2 candidate: Next.js admin app on Vercel.
+8. **App reads manifests** — styleMeUp Expo app should read from `magazine_issue_manifests` via Supabase. Not yet wired (V2 work in styleMeUp repo).
 
-- `magazine_run_steps` — owned by the-edit, service role only
-- `magazine_issue_manifests` — owned by the-edit, service role only
-- `app_*` — reserved namespace for styleMeUp app tables (not yet created)
+## Open V2 work
 
-RLS is enabled on both magazine tables but no policies exist — service role bypasses RLS, and anon/authenticated grants have been revoked. The two INFO-level "RLS enabled, no policies" advisor notes are intentional.
+See `NEXT_STEPS.md`.
 
-Migrations live in `supabase/migrations/` as timestamped SQL files. Apply with `supabase db push` or via the MCP `apply_migration` tool.
+## Common gotchas
 
-## Verification Snapshot
-
-- `npx tsc --noEmit` passes with zero errors.
-- `npm install` succeeds with the lockfile committed.
-- Three migrations applied to drip; security advisors show zero ERROR or WARN issues.
-- No code has executed against Anthropic yet.
-
-## Immediate Next Checks
-
-- See `NEXT_STEPS.md` for the active queue.
-- The first concrete blocker is the missing service role key in `.env`. Once that's populated, `npm run draft` should reach the first executor.
-- The second blocker is deciding whether research starts from manual source packets or live APIs. Without real sources, the research executor will produce ungrounded candidates that the QA executor will correctly reject.
+- Parent shell's empty `ANTHROPIC_API_KEY` overrides `.env` unless `dotenv` is loaded with `override: true`. Handled in `src/lib/env.ts`.
+- Gemini model name is `gemini-2.5-flash-image` (no `-preview` suffix). Old code had `-preview` and 404'd.
+- Running outside the-edit dir breaks imports — always `cd /Users/siddarthnyati/the-edit` first.
+- Web search results count against input tokens (search results land in context). Constrain `max_uses` aggressively.
+- Sonnet 4.6 cache minimum is 2048 tokens. Editor's prefix is ~600 → won't cache. QA's is ~21K → caches well.
