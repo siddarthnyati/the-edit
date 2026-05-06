@@ -1,5 +1,40 @@
 # the-edit Change Log
 
+## 2026-05-05 (Steps 1 + 2 shipped — V1 fully optimized)
+
+- Changed:
+  - **Step 1 (`d3da646`)** — Anthropic prompt caching on QA + research/search.
+    - QA executor: BRAND_PREAMBLE + full DESIGN.md (~21K tokens) moved to a cached content part with `providerOptions.anthropic.cacheControl: { type: 'ephemeral' }`. After first run, second-run-onward QA cost drops from ~$0.11 to ~$0.02.
+    - Research search call: `cache_control: { type: 'ephemeral' }` on the system content array (BRAND_PREAMBLE + DESIGN.md slice ~3K tokens). Subsequent runs read at 0.1× input rate.
+    - Editor caching skipped — its cached content (~600 tokens) is below Sonnet 4.6's 2048-token cache minimum.
+    - Cost calculations now read `cache_read_input_tokens` and `cache_creation_input_tokens` from usage and bill at the correct multipliers (write 1.25×, read 0.1×). Logs print the breakdown.
+  - **Step 2 (this commit)** — Search archive + 292-source backfill.
+    - New table `magazine_search_archive(url PK, title, publisher, signal_type, trend_keywords[], raw_snippet, first_seen_at, last_seen_at, source_run_ids[])` with GIN index on `trend_keywords`.
+    - `src/lib/archive.ts` provides `archiveSources()` (upsert with keyword + run_id merge) and `findFreshSources({ trendKeywords, freshDays, limit })`.
+    - Research executor now checks the archive first: if ≥15 sources match the seed trend's keywords within the last 7 days, **web search is skipped entirely** and the structuring stage runs against the archived narrative.
+    - When web search does run, results are merged into the archive *before* stage 2 — so a stage-2 failure no longer loses the sources we paid for.
+    - `npm run backfill-archive` — one-time script to recover sources from prior completed research runs. First run today recovered 47 sources from the successful run (the unconstrained 292-source run failed at stage 2 before sources were persisted, so they're not recoverable).
+- Why:
+  - Caching is the single biggest cost lever for QA (full DESIGN.md every run is wasteful when nothing about the brand bible changes).
+  - The archive turns research from "every run pays full cost" into "first run for a trend pays, repeat runs pay near-zero." Critical for week-2+ economics.
+- Cost picture after Steps 1+2:
+  - Week 1, fresh trend, web search runs: ~$1.60 per issue (same as before — caching pays for itself on next call)
+  - Week 2+, repeat trend, archive hit: ~$1.20 per issue (skip web search entirely, ~$0.05 research stage)
+  - QA: $0.11 → $0.02 from run 2 onward
+- Affected:
+  - `src/executors/qa.ts` (cached content parts)
+  - `src/executors/research.ts` (cache_control on system, archive lookup, archive write-back, stage 2 extracted)
+  - `src/lib/archive.ts` (new)
+  - `src/scripts/backfill-archive.ts` (new)
+  - `supabase/migrations/20260505_search_archive.sql` (new)
+  - `package.json` (npm run backfill-archive)
+- Next:
+  - V1 is complete. Open paths:
+    - V2: in-app variant picker (replace CLI `npm run pick`)
+    - V2: bake the asset-tool-name ban into the prompt executor's system prompt (so QA doesn't have to re-catch it every run)
+    - V2: Kling motion when API is purchased and base costs are stable
+    - Productionize: scheduled run via `cron` or GitHub Actions
+
 ## 2026-05-05 (V1 backbone complete: Steps 0 + 5 + 3 + 4 shipped)
 
 - Changed:

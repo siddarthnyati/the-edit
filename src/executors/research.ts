@@ -4,6 +4,7 @@ import { generateObject } from 'ai';
 import { z } from 'zod';
 import { BRAND_PREAMBLE, designMd } from '../lib/context.js';
 import { recordCost, recordWebSearchCost, exceededWebSearchCap, getWebSearchCost } from '../lib/cost.js';
+import { archiveSources, findFreshSources } from '../lib/archive.js';
 import type { RunConfig, Source } from '../orchestrator/types.js';
 
 // ---------------------------------------------------------------------------
@@ -35,7 +36,78 @@ export type ResearchOutput = z.infer<typeof StructuredResearchSchema> & {
 
 const anthropicClient = new Anthropic();
 
+const ARCHIVE_FRESH_DAYS = 7;
+const ARCHIVE_MIN_SOURCES = 15;
+
+function deriveKeywords(input: ResearchInput): string[] {
+  if (!input.runConfig.seedTrend) return [];
+  return input.runConfig.seedTrend
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
+}
+
+async function tryArchive(input: ResearchInput): Promise<{ narrative: string; sources: Source[] } | null> {
+  const keywords = deriveKeywords(input);
+  if (keywords.length === 0) {
+    console.log('[research/archive] no seed trend → skipping archive lookup, running web search');
+    return null;
+  }
+
+  const fresh = await findFreshSources({
+    trendKeywords: keywords,
+    freshDays: ARCHIVE_FRESH_DAYS,
+    limit: 30,
+  });
+
+  if (fresh.length < ARCHIVE_MIN_SOURCES) {
+    console.log(
+      `[research/archive] ${fresh.length} sources match seed '${input.runConfig.seedTrend}' ` +
+      `(threshold ${ARCHIVE_MIN_SOURCES}). Running web search.`,
+    );
+    return null;
+  }
+
+  console.log(
+    `[research/archive] HIT — ${fresh.length} sources match seed '${input.runConfig.seedTrend}'. ` +
+    `Skipping web search.`,
+  );
+
+  const sources: Source[] = fresh.map((row) => ({
+    title: row.title,
+    url: row.url,
+    publisher: row.publisher,
+    observedAt: row.last_seen_at,
+    signalType: row.signal_type,
+  }));
+
+  // Build a narrative from archived metadata. Structuring stage will turn
+  // this into TrendCandidates the same way it does for fresh search output.
+  const narrative = [
+    `## Archived sources for trend '${input.runConfig.seedTrend}'`,
+    `Date range: ${input.runConfig.dateRange}`,
+    `Audience tracks: ${input.runConfig.audienceTracks.join(', ')}`,
+    '',
+    'These sources were gathered from prior research runs and are still fresh',
+    `(within ${ARCHIVE_FRESH_DAYS} days). No new web search was performed for this run.`,
+    '',
+    ...fresh.map((row) => {
+      const snippet = row.raw_snippet ? ` — ${row.raw_snippet.slice(0, 200)}` : '';
+      return `- [${row.signal_type}] ${row.title} (${row.publisher})${snippet}`;
+    }),
+  ].join('\n');
+
+  return { narrative, sources };
+}
+
 export async function runResearch(input: ResearchInput): Promise<ResearchOutput> {
+  // ── Archive check — skip web search entirely when archive is fresh ───────
+  const archived = await tryArchive(input);
+  if (archived) {
+    return await structureNarrative(archived.narrative, archived.sources);
+  }
+
   // ── Stage 1: grounded web search ──────────────────────────────────────────
   const searchPrompt = [
     `Date range: ${input.runConfig.dateRange}`,
@@ -138,12 +210,30 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
     );
   }
 
+  // Persist new sources into the archive for future runs to reuse.
+  // Use the seed trend (or a placeholder) as the keyword tag.
+  const trendKeywords = deriveKeywords(input);
+  if (trendKeywords.length > 0 && sources.length > 0) {
+    const { inserted, updated } = await archiveSources({
+      sources,
+      trendKeywords,
+      runId: input.runConfig.runId,
+    });
+    console.log(`[research/archive] saved ${inserted} new + ${updated} refreshed sources to archive`);
+  }
+
   // ── Stage 2: structure the narrative into typed candidates ────────────────
   // Wait briefly to avoid stacking against the per-minute rate limit. The
   // search call may have spent 200K+ input tokens behind the scenes (web
   // search results count against the same window).
   await new Promise((resolve) => setTimeout(resolve, 25_000));
 
+  return await structureNarrative(narrative, sources);
+}
+
+// Stage 2 is identical whether the narrative came from a web search or
+// from the archive. Extracted so both paths use the same code.
+async function structureNarrative(narrative: string, sources: Source[]): Promise<ResearchOutput> {
   // Trim the narrative to keep stage 2 inside the rate window. We only need
   // the structural skeleton, not the full editorial copy or the citations.
   const trimmed = narrative.length > 8000 ? narrative.slice(0, 8000) + '\n[truncated]' : narrative;

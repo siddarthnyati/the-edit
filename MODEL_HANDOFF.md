@@ -3,9 +3,9 @@
 Status: living context for any model continuing the work on this repo.
 Last updated: 2026-05-05 (V1 image-loop plan committed; Step 0 shipped)
 
-## V1 status — backbone complete, optimizations remaining
+## V1 status — COMPLETE
 
-The full V1 loop is wired end-to-end:
+The full V1 loop is wired end-to-end with caching and archive optimizations:
 
 ```
 npm run draft                  # research → rank → edit → prompt → qa
@@ -14,14 +14,14 @@ npm run pick    -- <runId>     # macOS Quick Look picker, 1 per slot
 npm run publish -- <runId>     # writes manifest with picked asset paths
 ```
 
-Plus `npm run inspect` to list/dump runs.
+Utilities: `npm run inspect` (list / dump runs), `npm run backfill-archive` (recover prior sources).
 
 - ✅ **Step 0** (`f7d7aed`) — caps $2/$1.50/$1 with salvage-on-cap
 - ✅ **Step 5** (`b6b2c6a`) — publish CLI
 - ✅ **Step 3** (`986b13b`) — imagine executor (Gemini 2.5 Flash Image)
 - ✅ **Step 4** (`72fa6ee`) — variant picker CLI
-- 🔜 **Step 1** — prompt caching (~30% cost reduction)
-- 🔜 **Step 2** — search archive + backfill 292 stored sources
+- ✅ **Step 1** (`d3da646`) — prompt caching on QA + research/search
+- ✅ **Step 2** (current) — search archive + backfill (47 sources recovered)
 
 Slot composition (locked):
 1. Cover start — hero garment alone

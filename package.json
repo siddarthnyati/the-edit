@@ -9,6 +9,7 @@
     "imagine": "tsx src/scripts/imagine.ts",
     "pick": "tsx src/scripts/pick.ts",
     "publish": "tsx src/scripts/publish.ts",
+    "backfill-archive": "tsx src/scripts/backfill-archive.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts"
   },

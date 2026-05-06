@@ -39,18 +39,27 @@ Plus utilities: `npm run inspect` (list / dump runs), all costs persisted to Sup
 - Pick clears any prior pick on the same slot — fully re-runnable
 - Publish script now reads picked variants instead of placeholder paths and refuses to publish until all 7 slots have a winner
 
-### 🔜 Step 1 — Prompt caching (saves ~30% per run)
+### ✓ Step 1 — Prompt caching (shipped `d3da646`)
 
-- Add `cache_control: { type: 'ephemeral' }` to the static-by-run blocks: BRAND_PREAMBLE, DESIGN.md excerpts, full DESIGN.md in QA executor
-- QA cost drops from $0.11 → ~$0.02 after first cache write
-- Editor and research-search benefit too. Total run-to-run savings: 30-40%
+- QA: `providerOptions.anthropic.cacheControl: { type: 'ephemeral' }` on full DESIGN.md content part. Cost drops $0.11 → $0.02 from run 2 onward.
+- Research/search: `cache_control` on system array. ~30% reduction on repeat calls.
+- Editor skipped (~600 token cached content, below Sonnet's 2048 cache minimum).
 
-### 🔜 Step 2 — Source archive + 292-source backfill
+### ✓ Step 2 — Source archive (shipped this commit)
 
-- New table `magazine_search_archive(url, title, publisher, signal_type, trend_keywords, raw_snippet, first_seen_at, last_seen_at)`
-- Research executor checks archive before issuing a web search; if ≥ 15 fresh sources match the seed trend, **skip web search entirely**
-- One-time backfill script reads the failed run's stored sources and seeds the archive (recovers the 292 sources we already paid for)
-- Week-2+ research drops from $0.30 → ~$0.05
+- `magazine_search_archive` table created with GIN index on `trend_keywords`.
+- `src/lib/archive.ts`: `archiveSources()` upsert + `findFreshSources()` query.
+- Research executor checks archive first; skips web search entirely when ≥15 fresh sources match.
+- Sources persisted *before* stage 2 — stage 2 failures no longer lose paid-for searches.
+- `npm run backfill-archive` recovered 47 sources from prior successful run. (The 292-source run failed at stage 2 before the new archive write logic existed, so those are not recoverable.)
+
+## V2 candidates (unprioritized)
+
+- **In-app variant picker.** Replace `npm run pick` CLI with an admin-gated screen in the styleMeUp app.
+- **Bake the asset-tool-name ban into the prompt executor's system prompt.** QA had to catch "Nano Banana" / "Kling" leaks on the first real run. Should be a hard rule for the prompt executor.
+- **Kling motion.** Once base costs are stable and Kling API is purchased.
+- **Scheduled runs.** Cron / GitHub Actions to run the pipeline weekly without manual kickoff.
+- **Issue archive in the app.** styleMeUp Discover should show prior issues, not just the latest.
 
 ## Cost projection across the plan
 
