@@ -113,3 +113,30 @@ export function resetCostTracker() {
   perStepUsd = {};
   currentStep = null;
 }
+
+// Seed the in-memory cost tracker with prior costs persisted to Supabase
+// for a given runId. Call this at the top of every script that touches
+// the cost system (imagine, publish) so the hard cap accounts for what
+// the draft script already spent.
+//
+// Imports supabase lazily to avoid pulling DB code into pure-logic flows.
+export async function loadPriorCost(runId: string): Promise<number> {
+  const { supabase } = await import('./supabase.js');
+  const { data, error } = await supabase
+    .from('magazine_run_steps')
+    .select('estimated_cost_usd')
+    .eq('run_id', runId);
+
+  if (error) {
+    console.warn(`[cost] could not load prior costs for ${runId}: ${error.message}`);
+    return 0;
+  }
+
+  const prior = (data ?? []).reduce(
+    (sum: number, row: { estimated_cost_usd: number | null }) => sum + (row.estimated_cost_usd ?? 0),
+    0,
+  );
+  totalUsd = prior;
+  console.log(`[cost] seeded total from prior steps: $${prior.toFixed(4)} (hard cap $${HARD_CAP_USD.toFixed(2)})`);
+  return prior;
+}

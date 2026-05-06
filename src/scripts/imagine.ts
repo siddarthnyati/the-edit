@@ -1,6 +1,7 @@
 import '../lib/env.js';
 import { supabase } from '../lib/supabase.js';
 import { runImagine } from '../executors/imagine.js';
+import { loadPriorCost } from '../lib/cost.js';
 import type { PromptOutput } from '../executors/prompt.js';
 
 // Usage: npm run imagine -- <runId>
@@ -53,6 +54,10 @@ async function loadPromptStep(runId: string): Promise<PromptOutput> {
 async function main() {
   const runId = await resolveRunId(arg!);
   console.log(`[imagine] resolving run ${runId.slice(0, 8)}…`);
+
+  // Seed the cost tracker with what the draft script already spent on
+  // this run, so the hard cap covers the full pipeline not just imagine.
+  await loadPriorCost(runId);
 
   const prompts = await loadPromptStep(runId);
   const result = await runImagine({ runId, prompts });

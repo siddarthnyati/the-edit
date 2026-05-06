@@ -84,7 +84,9 @@ export async function runQA(input: QAInput): Promise<QAOutput> {
             type: 'text',
             text: cachedContext,
             providerOptions: {
-              anthropic: { cacheControl: { type: 'ephemeral' } },
+              // 1-hour TTL costs 2× write but pays back after 3+ reads.
+              // QA reads the same DESIGN.md on every run — well worth it.
+              anthropic: { cacheControl: { type: 'ephemeral', ttl: '1h' } },
             },
           },
           { type: 'text', text: variableInput },
