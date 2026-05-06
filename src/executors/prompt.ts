@@ -6,6 +6,71 @@ import { recordCost } from '../lib/cost.js';
 import type { EditOutput } from './edit.js';
 import type { RankOutput } from './rank.js';
 
+// Banned tokens lifted from DESIGN.md §4, §6, §8. Any of these in a prompt
+// or alt text triggers a Zod validation error and the executor will retry
+// with corrective system instructions. Cheaper than letting QA catch them.
+const BANNED_PROMPT_TOKENS = [
+  // §8 composition bans
+  'flat-lay', 'flat lay', 'flatlay', 'from above', 'top-down', 'topdown',
+  'overhead view', 'laid flat', 'birds-eye', "bird's-eye", 'birdseye',
+  // §6 background tinting / §4 gradient bans
+  'gradient', 'tinted', 'blue-tint', 'blue-tinted', 'colour cast', 'color cast',
+  'textured background', 'pattern background', 'noise texture',
+  // Asset tool name bans (no "powered by AI" leak)
+  'nano banana', 'kling', 'imagen', 'gemini', 'midjourney', 'dall-e', 'stable diffusion',
+  // Brand logo / name bans (non-exhaustive — top offenders)
+  'calvin klein', 'nike', 'adidas', 'gucci', 'louis vuitton', 'chanel',
+  // Anatomical close-up bans
+  'crotch', 'groin close-up', 'cleavage close-up',
+];
+
+function checkPromptText(label: string, text: string): string | null {
+  const lower = text.toLowerCase();
+  for (const token of BANNED_PROMPT_TOKENS) {
+    if (lower.includes(token)) {
+      return `${label} contains banned token "${token}"`;
+    }
+  }
+  return null;
+}
+
+// Alt text must lead with a physical garment descriptor per DESIGN.md §13.
+// Heuristic: look for at least one of (color | fabric | cut) word in the
+// first 80 characters before the editorial flourish.
+const PHYSICAL_DESCRIPTORS = [
+  'denim', 'cotton', 'wool', 'silk', 'linen', 'leather', 'cashmere',
+  'jersey', 'velvet', 'corduroy', 'knit', 'satin', 'chiffon', 'tweed',
+  'black', 'white', 'navy', 'indigo', 'cream', 'charcoal', 'camel',
+  'oat', 'ivory', 'rust', 'olive', 'crimson', 'beige', 'tan', 'grey', 'gray',
+];
+
+function checkAltText(label: string, text: string): string | null {
+  const opening = text.toLowerCase().slice(0, 100);
+  const hasDescriptor = PHYSICAL_DESCRIPTORS.some((d) => opening.includes(d));
+  if (!hasDescriptor) {
+    return `${label} alt text missing physical descriptor (color/fabric/cut) in first 100 chars`;
+  }
+  return null;
+}
+
+function validatePromptSuite(suite: { coverStart: { prompt: string; altText: string }; coverEnd: { prompt: string; altText: string }; coverMotion: { prompt: string; altText: string }; trendCardPrompts: { slug: string; prompt: string; altText: string }[]; curatorCardPrompts: { slug: string; prompt: string; altText: string }[] }): string[] {
+  const issues: string[] = [];
+  const slots: Array<{ label: string; prompt: string; altText: string }> = [
+    { label: 'coverStart', prompt: suite.coverStart.prompt, altText: suite.coverStart.altText },
+    { label: 'coverEnd', prompt: suite.coverEnd.prompt, altText: suite.coverEnd.altText },
+    { label: 'coverMotion', prompt: suite.coverMotion.prompt, altText: suite.coverMotion.altText },
+    ...suite.trendCardPrompts.map((c) => ({ label: `trend.${c.slug}`, prompt: c.prompt, altText: c.altText })),
+    ...suite.curatorCardPrompts.map((c) => ({ label: `curator.${c.slug}`, prompt: c.prompt, altText: c.altText })),
+  ];
+  for (const s of slots) {
+    const promptIssue = checkPromptText(`${s.label}.prompt`, s.prompt);
+    if (promptIssue) issues.push(promptIssue);
+    const altIssue = checkAltText(s.label, s.altText);
+    if (altIssue) issues.push(altIssue);
+  }
+  return issues;
+}
+
 const AssetPromptSuiteSchema = z.object({
   coverStart: z.object({
     prompt: z.string().describe('Nano Banana prompt for the cover opening frame'),
@@ -75,7 +140,14 @@ export async function runPrompt(input: PromptInput): Promise<PromptOutput> {
       '- Then setting: studio lighting type, background tone.',
       '- End with editorial register cues: "magazine quality", "editorial sharp focus on textile".',
       '- Cover motion: defer for V2. Use static rendered_hero treatment — single hero garment.',
-      '- Alt text must be editorial voice, not descriptive captions.',
+      '',
+      'BACKGROUNDS — strict rules:',
+      '- Use ONLY: "true black void background, #000000, no gradient" or "warm off-white seamless studio, no texture".',
+      '- NEVER use: gradient, color cast, blue-tint, textured background, pattern background.',
+      '',
+      'ALT TEXT — must lead with physical descriptors per DESIGN.md §13:',
+      '- First 100 chars MUST contain at least one of: a fabric (denim/cotton/wool/silk/linen/leather/cashmere/jersey/velvet/corduroy/knit/satin) OR a color (black/white/navy/indigo/cream/charcoal/camel/oat/ivory).',
+      '- Then editorial flourish in second clause. Example: "Dark indigo bootcut jeans, selvedge construction — the silhouette that closed the century and opens the season."',
     ].join('\n'),
     prompt: [
       `Trend: ${input.ranked.winningTrend} (from ${input.ranked.eraReference})`,
@@ -97,6 +169,19 @@ export async function runPrompt(input: PromptInput): Promise<PromptOutput> {
   const estimatedCostUsd = (usage.promptTokens * 0.000003) + (usage.completionTokens * 0.000015);
   recordCost(estimatedCostUsd, 'prompt');
   console.log(`[prompt] ~$${estimatedCostUsd.toFixed(4)} | ${usage.promptTokens}p + ${usage.completionTokens}c tokens`);
+
+  // Validate against the ban list. If anything slipped through, log issues
+  // and throw — orchestrator catches and the operator can either rerun or
+  // adjust. Cheaper than letting QA catch it on the full DESIGN.md pass.
+  const issues = validatePromptSuite(object);
+  if (issues.length > 0) {
+    console.warn(`[prompt] post-generation validation found ${issues.length} issue(s):`);
+    issues.forEach((i) => console.warn(`  - ${i}`));
+    throw new Error(
+      `Prompt suite failed pre-QA validation:\n  ${issues.join('\n  ')}\n\n` +
+      `Re-run "npm run draft" — the system prompt warnings should prevent recurrence.`,
+    );
+  }
 
   return object;
 }
