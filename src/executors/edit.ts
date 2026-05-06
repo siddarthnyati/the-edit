@@ -6,18 +6,26 @@ import { recordCost } from '../lib/cost.js';
 import type { RankOutput } from './rank.js';
 import type { RunConfig } from '../orchestrator/types.js';
 
+// Headline rules from DESIGN.md §5.5 — enforced as Zod refines so the
+// editor can't ship a textbook-style headline that fails the Vogue test.
+const headlineRule = z.string()
+  .refine((s) => s.split(/\s+/).filter(Boolean).length <= 6, '≤ 6 words')
+  .refine((s) => /[.!?]?$/.test(s) && !/[?!]$/.test(s), 'must end in . (no ? or !)')
+  .refine((s) => !s.includes(':'), 'no colon — colons read as textbook entries')
+  .refine((s) => !/^(how |why |what |where |when |is |are |does |do )/i.test(s), 'no question opener');
+
 const IssueDraftSchema = z.object({
   concept: z.string().describe('One paragraph editorial concept for the issue'),
   cover: z.object({
     eyebrow: z.string().describe('Volume and context line, e.g. "VOL. 19 · THIS WEEK\'S RETURN"'),
-    headline: z.string().describe('Monumental uppercase headline, max 6 words'),
+    headline: headlineRule.describe('Monumental UPPERCASE headline, ≤6 words, ends in period. See DESIGN.md §5.5 for the four headline patterns.'),
     deck: z.string().describe('Italic subtitle in Magazine voice, max 12 words'),
     slug: z.string().describe('URL-safe slug, e.g. "vol-19-wide-wale"'),
   }),
   trendCards: z.array(z.object({
     slug: z.string(),
     eyebrow: z.string(),
-    headline: z.string(),
+    headline: headlineRule,
     deck: z.string(),
     body: z.string().describe('2-3 sentences. Editorial. No bullet points.'),
     kind: z.enum(['jacket', 'tee', 'denim', 'trouser', 'skirt', 'boot', 'sneaker', 'oxford', 'cap']),
@@ -55,6 +63,37 @@ export async function runEdit(input: EditInput): Promise<EditOutput> {
       '',
       '## DESIGN.md §4 — banned language and visuals',
       extractSection(designMd(), '§4'),
+      '',
+      '## DESIGN.md §5.5 — headline patterns (apply strictly)',
+      'Every headline (cover + every trend card) MUST follow one of these four shapes:',
+      '',
+      '1. THE REVERSAL — flip the era from "old" to "now"',
+      '   "1990s V-neck jumper" → "YOUR DAD\'S SWEATER. YOUR MOVE."',
+      '',
+      '2. THE POSSESSIVE — endowment effect via "your"',
+      '   "Bootcut jeans return" → "WHAT YOUR MOTHER WORE. WORN BETTER."',
+      '',
+      '3. THE DATE STAMP — curiosity gap via "last seen"',
+      '   "Bohemian layering returns" → "LAST SEEN: 2004. REWRITTEN."',
+      '',
+      '4. THE SINGLE VERB — cognitive ease via verb-only',
+      '   "V-neck heritage knitwear" → "RETURNING."',
+      '',
+      'Construction rules:',
+      '- ≤ 6 words. If you need more, you don\'t have a headline yet.',
+      '- Ends in period (.). Never ?, !, or ,. Never a colon (:).',
+      '- One specific noun per headline. "The slip dress" beats "minimalist eveningwear".',
+      '- Year reference allowed once per issue maximum.',
+      '- Never name a designer or brand in the headline (saves them for the body).',
+      '- Never explain the trend in the headline. The deck does that.',
+      '',
+      'BAD vs GOOD examples:',
+      '- BAD: "The Bootcut Jean: Y2K Denim Rewired for 2026"',
+      '  GOOD: "WHAT YOUR MOTHER WORE. CUT BETTER."',
+      '- BAD: "Bohemian Layering: The Chloé Decade Returns"',
+      '  GOOD: "SIENNA\'S CLOSET. STILL OPEN."',
+      '- BAD: "Six Houses Confirmed This Across SS26"',
+      '  GOOD: "SIX HOUSES. ONE SILHOUETTE."',
     ].join('\n'),
     prompt: [
       `Volume: ${input.volume}`,
@@ -66,7 +105,8 @@ export async function runEdit(input: EditInput): Promise<EditOutput> {
       JSON.stringify(input.ranked.trendStories, null, 2),
       '',
       'Write the full Magazine issue draft.',
-      'Cover headline: monumental, uppercase, 3-6 words.',
+      'Cover headline: pick from the four headline patterns above. ≤6 words, ends in period, no colon.',
+      'Each trend card headline: also pick from the four patterns. Each card uses a DIFFERENT pattern to vary register.',
       'All body copy: declarative, present tense, no passive voice.',
       'Every line must read as if a Vogue editor wrote it.',
     ].join('\n'),
