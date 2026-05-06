@@ -16,8 +16,10 @@ import { supabase } from '../lib/supabase.js';
 // pick for that slot.
 
 const arg = process.argv[2];
+const repick = process.argv.includes('--repick');
 if (!arg) {
-  console.error('Usage: npm run pick -- <runId>  (or "latest")');
+  console.error('Usage: npm run pick -- <runId>  (or "latest")  [--repick]');
+  console.error('  --repick   re-prompt for slots that already have a pick');
   process.exit(1);
 }
 
@@ -121,6 +123,13 @@ async function main() {
 
   try {
     for (const [slot, slotVariants] of bySlot) {
+      const alreadyPicked = slotVariants.some((v) => v.picked);
+      if (alreadyPicked && !repick) {
+        const pickedV = slotVariants.find((v) => v.picked)!;
+        console.log(`━━━ slot: ${slot} — already picked variant ${pickedV.variant_index} (use --repick to change) ━━━\n`);
+        continue;
+      }
+
       const localPaths: string[] = [];
       for (const v of slotVariants) {
         localPaths.push(await downloadToTmp(v, tmpDir));
@@ -139,7 +148,7 @@ async function main() {
       }
       openProc = spawn('qlmanage', ['-p', ...localPaths], { stdio: 'ignore' });
 
-      const answer = await ask(`  Pick (1-${slotVariants.length}, or s to skip, or q to quit): `);
+      const answer = await ask(`  Pick one (1-${slotVariants.length}), s = skip, q = quit: `);
       const lower = answer.toLowerCase();
 
       if (lower === 'q') {
@@ -151,9 +160,12 @@ async function main() {
         continue;
       }
 
-      const choice = parseInt(answer, 10);
+      // Take the first valid 1-N number from the input. Tolerates
+      // comma-separated input (user typed "2,3,1") by picking the first.
+      const firstNum = answer.match(/[1-9]\d*/)?.[0];
+      const choice = firstNum ? parseInt(firstNum, 10) : NaN;
       if (!Number.isInteger(choice) || choice < 1 || choice > slotVariants.length) {
-        console.log(`[pick]   invalid input '${answer}', skipping ${slot}\n`);
+        console.log(`[pick]   invalid input '${answer}' (expected single 1-${slotVariants.length}), skipping ${slot}\n`);
         continue;
       }
 

@@ -161,3 +161,35 @@ Effort: 3-4 hours after API access is in hand.
 - Automated Kling video review (V3 — humans review motion)
 - Multi-language support (out of brand for now)
 - Personalized issues per user (out of scope per `AI_ORCHESTRATION.md`)
+
+---
+
+## V10 / future product ideas (captured from acid test feedback)
+
+### Revenue + sourcing layer
+
+- **Google Lens / shopping integration** for paid users. When a user sees a piece in a Magazine issue, they can tap to find it on retail sites (Zara, SSENSE, etc.).
+- **Affiliate referral revenue.** Each shopping link is a tagged affiliate URL. Click attribution tracked in Supabase. Initial partners: ShopStyle Collective, Skimlinks, or direct retailer affiliate programs (LTK, Rewardstyle).
+- **Source-grounded recommendations.** Move from generic editorial to "this exact garment is currently at X retailer for $Y."
+
+### Discovery classification by occasion
+
+- Add an `occasion` axis to Discover: `office casual`, `going out`, `weekend`, `formal`, `gym`, `travel`.
+- The Magazine pipeline emits issues across these axes simultaneously instead of one trend per week.
+- User taps an occasion in the styleMeUp app → sees curated looks within that context, drawn from their owned items + a few recommendations.
+
+### Body-type personalization (StitchFix-for-AI)
+
+- Onboarding adds 3-5 quiet questions: rough proportions, comfort with skin reveal, color tones that work, occasions covered.
+- Recommendations score-rank against the user's profile.
+- Parameters worth thinking about: shoulder vs hip ratio, height proxy, color season, formality preference, climate.
+- Accuracy measurement: tap-through rate, save rate, "wear" log feedback. Feed back into the recommender.
+
+### Magazine app design overhaul
+
+- Re-evaluate the Discover surface: how do trends cards feel on a 6.1" screen at arm's length?
+- Cover motion vs static — the deferred Kling work would matter most here.
+- Reading flow: the current 1-cover-then-3-cards pattern is fine for V1. Test whether a single-scroll long-form issue feels better.
+- Closet integration density — show a "from your wardrobe" matchstick under each trend card more prominently.
+
+These are explicitly product strategy work, not pipeline work. They go in styleMeUp's `NEXT_STEPS.md` once we move there.
