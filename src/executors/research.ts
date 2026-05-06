@@ -62,10 +62,26 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
   // timeout. Streaming keeps the connection alive while Claude works.
   // max_uses caps how many search queries Claude runs — without it, an
   // unconstrained run can pull in 200+ sources and blow the rate limit.
+  // System prompt is split into a cached prefix (BRAND_PREAMBLE +
+  // DESIGN.md excerpt — stable across runs) and is the only content here.
+  // After first call, subsequent runs read this at 0.1× input cost.
+  const cachedSystem = [
+    BRAND_PREAMBLE,
+    '',
+    '## DESIGN.md (excerpt)',
+    designMd().slice(0, 3000),
+  ].join('\n');
+
   const stream = anthropicClient.messages.stream({
     model: searchModel,
     max_tokens: 8000,
-    system: [BRAND_PREAMBLE, '', '## DESIGN.md (excerpt)', designMd().slice(0, 3000)].join('\n'),
+    system: [
+      {
+        type: 'text',
+        text: cachedSystem,
+        cache_control: { type: 'ephemeral' },
+      },
+    ],
     tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }],
     messages: [{ role: 'user', content: searchPrompt }],
   });
@@ -84,8 +100,14 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
     (b: Anthropic.Messages.ContentBlock) => b.type === 'server_tool_use',
   ).length;
 
+  const cacheRead = searchResponse.usage.cache_read_input_tokens ?? 0;
+  const cacheWrite = searchResponse.usage.cache_creation_input_tokens ?? 0;
+  const uncachedInput = Math.max(0, searchResponse.usage.input_tokens - cacheRead - cacheWrite);
+
   const tokenCost =
-    (searchResponse.usage.input_tokens * 0.000003) +
+    (uncachedInput * 0.000003) +
+    (cacheWrite * 0.000003 * 1.25) +
+    (cacheRead * 0.000003 * 0.1) +
     (searchResponse.usage.output_tokens * 0.000015);
   const searchFee = queryCount * 0.01;
 
@@ -94,7 +116,8 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
 
   console.log(
     `[research/search] ~$${(tokenCost + searchFee).toFixed(4)} | ${queryCount} queries | ` +
-    `${sources.length} sources | ${searchResponse.usage.input_tokens}p + ` +
+    `${sources.length} sources | ${searchResponse.usage.input_tokens}p ` +
+    `(uncached:${uncachedInput} | cache-read:${cacheRead} | cache-write:${cacheWrite}) + ` +
     `${searchResponse.usage.output_tokens}c tokens (search-fee $${searchFee.toFixed(4)} | ` +
     `cumulative web-search $${getWebSearchCost().toFixed(4)})`,
   );

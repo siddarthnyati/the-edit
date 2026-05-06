@@ -38,44 +38,78 @@ export type QAOutput = z.infer<typeof QAReportSchema>;
 export async function runQA(input: QAInput): Promise<QAOutput> {
   const model = process.env['MAGAZINE_QA_MODEL'] ?? 'claude-sonnet-4-6';
 
-  const { object, usage } = await generateObject({
+  // Cached prefix: BRAND_PREAMBLE + full DESIGN.md (~21K tokens). Stable
+  // across every QA call; cacheControl makes the second-run-onward read
+  // it at 0.1× input cost instead of full price.
+  const cachedContext = [
+    BRAND_PREAMBLE,
+    '',
+    '## DESIGN.md (full — apply all bans strictly)',
+    designMd(),
+  ].join('\n');
+
+  const variableInput = [
+    `Budget ceiling: $${input.runConfig.budgetUsd}`,
+    `Cost so far: $${input.stepCostsSoFar.toFixed(4)}`,
+    '',
+    '## Issue draft to review',
+    JSON.stringify(input.draft, null, 2),
+    '',
+    '## Asset prompts to review',
+    JSON.stringify(input.prompts, null, 2),
+    '',
+    '## Research sources (for grounding check)',
+    JSON.stringify(input.research.sources, null, 2),
+    '',
+    'Perform a full QA pass:',
+    '1. Vogue test — would a Vogue editor have written every line?',
+    '2. Banned language — any string from DESIGN.md §4?',
+    '3. Unsupported claims — anything not grounded in the research sources?',
+    '4. Asset prompt compliance — any banned imagery type?',
+    '5. Accessibility — alt text present and editorial for every asset?',
+    '6. Budget — total cost within ceiling?',
+    '',
+    'Verdict must be approve, revise, or reject.',
+    'Revise requires exact section + replacement requirement for every issue found.',
+  ].join('\n');
+
+  const { object, usage, providerMetadata } = await generateObject({
     model: anthropic(model),
     schema: QAReportSchema,
-    system: [
-      BRAND_PREAMBLE,
-      '',
-      '## DESIGN.md (full — apply all bans strictly)',
-      designMd(),
-    ].join('\n'),
-    prompt: [
-      `Budget ceiling: $${input.runConfig.budgetUsd}`,
-      `Cost so far: $${input.stepCostsSoFar.toFixed(4)}`,
-      '',
-      '## Issue draft to review',
-      JSON.stringify(input.draft, null, 2),
-      '',
-      '## Asset prompts to review',
-      JSON.stringify(input.prompts, null, 2),
-      '',
-      '## Research sources (for grounding check)',
-      JSON.stringify(input.research.sources, null, 2),
-      '',
-      'Perform a full QA pass:',
-      '1. Vogue test — would a Vogue editor have written every line?',
-      '2. Banned language — any string from DESIGN.md §4?',
-      '3. Unsupported claims — anything not grounded in the research sources?',
-      '4. Asset prompt compliance — any banned imagery type?',
-      '5. Accessibility — alt text present and editorial for every asset?',
-      '6. Budget — total cost within ceiling?',
-      '',
-      'Verdict must be approve, revise, or reject.',
-      'Revise requires exact section + replacement requirement for every issue found.',
-    ].join('\n'),
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: cachedContext,
+            providerOptions: {
+              anthropic: { cacheControl: { type: 'ephemeral' } },
+            },
+          },
+          { type: 'text', text: variableInput },
+        ],
+      },
+    ],
   });
 
-  const estimatedCostUsd = (usage.promptTokens * 0.000003) + (usage.completionTokens * 0.000015);
+  const cacheMeta = providerMetadata?.['anthropic'] as { cacheReadInputTokens?: number; cacheCreationInputTokens?: number } | undefined;
+  const cacheRead = cacheMeta?.cacheReadInputTokens ?? 0;
+  const cacheWrite = cacheMeta?.cacheCreationInputTokens ?? 0;
+  const uncachedInput = Math.max(0, usage.promptTokens - cacheRead - cacheWrite);
+
+  // Anthropic billing: cache write = 1.25× input rate, cache read = 0.1× input rate.
+  const estimatedCostUsd =
+    (uncachedInput * 0.000003) +
+    (cacheWrite * 0.000003 * 1.25) +
+    (cacheRead * 0.000003 * 0.1) +
+    (usage.completionTokens * 0.000015);
+
   recordCost(estimatedCostUsd, 'qa');
-  console.log(`[qa] ~$${estimatedCostUsd.toFixed(4)} | ${usage.promptTokens}p + ${usage.completionTokens}c tokens`);
+  console.log(
+    `[qa] ~$${estimatedCostUsd.toFixed(4)} | ${usage.promptTokens}p (uncached:${uncachedInput} | ` +
+    `cache-read:${cacheRead} | cache-write:${cacheWrite}) + ${usage.completionTokens}c tokens`,
+  );
 
   return object;
 }
