@@ -26,26 +26,32 @@ function modelForSlot(slot: string): { model: string; cost: number } {
   return match ?? { model: 'gemini-2.5-flash-image', cost: 0.039 };
 }
 
-// Per-variant angle injection — each of the 4 variants gets a different
-// camera angle so the picker has meaningful choices instead of 4 near-
-// identical front-facing shots.
-const VARIANT_ANGLES = [
-  'front view, model facing camera straight on',
-  'three-quarter view, model angled 30° to the right',
-  'profile view from the left side, model walking',
-  'back view, model walking away from camera with subtle head turn',
+// Variant strategy: most variants are GARMENT-ONLY editorial detail shots
+// (the brand default — void background, no human, focus on textile and cut).
+// The LAST variant in each slot is a model wearing the garment for context.
+// This gives the picker 3 product shots + 1 lifestyle shot per slot.
+const VARIANT_ANGLES_GARMENT_ONLY = [
+  'front view, garment on invisible mannequin, no human visible',
+  'three-quarter view from the right, garment on invisible mannequin',
+  'profile view from the left, garment on invisible mannequin',
 ];
 
-// Demographic rotation across variants. Explicit and named — generic
-// "diverse models" prompts default to white-thin without naming
-// alternatives. Each variant gets a different demographic so the
-// picker shows representation breadth automatically.
-const VARIANT_DEMOGRAPHICS = [
-  'Black model, mid-20s, athletic build',
-  'White model, late-20s, slim build',
-  'East Asian model, early-30s, average build',
-  'Latina model, mid-30s, curvy build',
+// The single model variant per slot uses one demographic from this list.
+// Demographic rotates across SLOTS (not variants within a slot) so that
+// each issue shows representation breadth across the cover + cards.
+// Pick by slot index — see modelDemographicForSlotIndex() below.
+const SLOT_MODEL_DEMOGRAPHICS = [
+  'Black model, mid-20s, athletic build, walking',
+  'White model, late-20s, slim build, walking',
+  'East Asian model, early-30s, average build, walking',
+  'Latina model, mid-30s, curvy build, walking',
+  'Middle Eastern model, late-20s, tall, walking',
+  'South Asian model, mid-30s, average build, walking',
 ];
+
+function modelDemographicForSlotIndex(slotIdx: number): string {
+  return SLOT_MODEL_DEMOGRAPHICS[slotIdx % SLOT_MODEL_DEMOGRAPHICS.length]!;
+}
 
 // Per-slot aspect ratio. Cover and rotations are 4:5 portrait (mobile
 // feed); trend cards are 1:1 square (grid layout).
@@ -107,17 +113,34 @@ function buildSlotJobs(prompts: PromptOutput): SlotJob[] {
 function buildVariantPrompt(args: {
   basePrompt: string;
   slot: string;
+  slotIdx: number;
   variantIdx: number;
+  variantsPerSlot: number;
 }): string {
-  const angle = VARIANT_ANGLES[args.variantIdx % VARIANT_ANGLES.length];
-  const demo = VARIANT_DEMOGRAPHICS[args.variantIdx % VARIANT_DEMOGRAPHICS.length];
+  const isModelShot = args.variantIdx === args.variantsPerSlot - 1; // last variant is model shot
   const aspect = aspectRatioForSlot(args.slot);
 
+  if (isModelShot) {
+    const demo = modelDemographicForSlotIndex(args.slotIdx);
+    return [
+      args.basePrompt,
+      '',
+      `LIFESTYLE / CONTEXT SHOT (1 of ${args.variantsPerSlot}):`,
+      `Composition: editorial Zara-style — ${demo} wearing the garment, three-quarter walking pose, void or minimalist studio background.`,
+      'The garment is still the subject; the model adds context.',
+      `Aspect ratio: ${aspect}.`,
+      '',
+      NEGATIVE_PROMPT_RULES,
+    ].join('\n');
+  }
+
+  // Default: garment-only editorial detail shot, no humans
+  const angle = VARIANT_ANGLES_GARMENT_ONLY[args.variantIdx % VARIANT_ANGLES_GARMENT_ONLY.length];
   return [
     args.basePrompt,
     '',
-    `Camera and composition: ${angle}.`,
-    `Model: ${demo}. The garment is the subject; the model is the canvas.`,
+    `PRODUCT SHOT (${args.variantIdx + 1} of ${args.variantsPerSlot - 1} garment-only variants):`,
+    `Composition: ${angle}. No human, no model, no hands, no skin in frame.`,
     `Aspect ratio: ${aspect}.`,
     '',
     NEGATIVE_PROMPT_RULES,
@@ -224,7 +247,8 @@ export async function runImagine(input: ImagineInput): Promise<ImagineOutput> {
   let actualCost = 0;
   const slotsGenerated: string[] = [];
 
-  for (const job of jobs) {
+  for (let slotIdx = 0; slotIdx < jobs.length; slotIdx++) {
+    const job = jobs[slotIdx]!;
     if (exceededImagineCap()) {
       console.warn(
         `[imagine] CAP EXCEEDED ($${getImagineCost().toFixed(4)} > $${getImagineCap().toFixed(2)}). ` +
@@ -235,16 +259,20 @@ export async function runImagine(input: ImagineInput): Promise<ImagineOutput> {
     }
 
     const { model, cost: perImageCost } = modelForSlot(job.slot);
-    console.log(`[imagine] slot '${job.slot}' (${model}, $${perImageCost.toFixed(3)} ea)…`);
+    const modelDemo = modelDemographicForSlotIndex(slotIdx).split(',')[0]; // just the demographic name for log
+    console.log(`[imagine] slot '${job.slot}' (${model}, $${perImageCost.toFixed(3)} ea, ${VARIANTS_PER_SLOT - 1} product + 1 with ${modelDemo})…`);
 
-    // Generate variants for this slot in parallel. Each variant gets a
-    // different camera angle and demographic so the picker has meaningful
-    // choices instead of 4 near-identical shots.
+    // Generate variants for this slot in parallel. The first N-1 variants
+    // are garment-only editorial product shots at varying angles. The Nth
+    // variant is a Zara-style lifestyle shot with a model — demographic
+    // rotates per slot so each issue shows representation breadth.
     const variantPromises = Array.from({ length: VARIANTS_PER_SLOT }, async (_, idx) => {
       const finalPrompt = buildVariantPrompt({
         basePrompt: job.prompt,
         slot: job.slot,
+        slotIdx,
         variantIdx: idx,
+        variantsPerSlot: VARIANTS_PER_SLOT,
       });
       const bytes = await generateWithRetry(finalPrompt, model);
       const storagePath = await uploadVariant(input.runId, job.slot, idx, bytes);
