@@ -76,12 +76,13 @@ nothing the pipeline produces actually appears in the product.
 Where: `styleMeUp` repo (not the-edit).
 
 Concrete tasks:
-- [ ] Install `@supabase/supabase-js` in styleMeUp Expo app
-- [ ] Add `lib/supabase.ts` with anon-key client (read-only via signed URLs)
-- [ ] Replace `lib/magazineIssue.ts` static export with a query: `select * from magazine_issue_manifests order by volume desc limit 1`
-- [ ] Use `supabase.storage.from('magazine-assets').createSignedUrl(path, 3600)` for asset URLs
-- [ ] Update `screens/Discover/Discover.tsx` to consume manifest shape
-- [ ] Test cold-load + offline fallback to last cached manifest
+
+- Install `@supabase/supabase-js` in styleMeUp Expo app
+- Add `lib/supabase.ts` with anon-key client (read-only via signed URLs)
+- Replace `lib/magazineIssue.ts` static export with a query: `select * from magazine_issue_manifests order by volume desc limit 1`
+- Use `supabase.storage.from('magazine-assets').createSignedUrl(path, 3600)` for asset URLs
+- Update `screens/Discover/Discover.tsx` to consume manifest shape
+- Test cold-load + offline fallback to last cached manifest
 
 Effort: 3-4 hours. No new infra needed — drip Supabase already has the data.
 
@@ -93,9 +94,10 @@ Wasted a $0.11 QA round catching what should be a hard rule.
 Where: `the-edit/src/executors/prompt.ts`.
 
 Concrete:
-- [ ] Add to system prompt: "Never name the asset generation tool (Gemini, Nano Banana, Imagen, Kling, etc.) in any prompt or alt text. Describe the desired image directly."
-- [ ] Add a Zod refine on `AssetPromptSuiteSchema` that rejects strings containing those tokens
-- [ ] Re-test with `npm run draft`
+
+- Add to system prompt: "Never name the asset generation tool (Gemini, Nano Banana, Imagen, Kling, etc.) in any prompt or alt text. Describe the desired image directly."
+- Add a Zod refine on `AssetPromptSuiteSchema` that rejects strings containing those tokens
+- Re-test with `npm run draft`
 
 Effort: 30 min.
 
@@ -108,12 +110,13 @@ the prompt + alt text for context.
 Where: new directory `the-edit/apps/admin/` (Next.js, deploy to Vercel).
 
 Concrete:
-- [ ] `apps/admin/` Next.js scaffold
-- [ ] Supabase Auth with email allowlist (just sidd.nyati96@gmail.com)
-- [ ] `/runs` — list runs from `magazine_run_steps` grouped by run_id
-- [ ] `/runs/[runId]/pick` — 7 slots × 4 thumbnails, click to set `picked=true`
-- [ ] `/api/sign-url` — server-side signed URL generation for the magazine-assets bucket
-- [ ] Deploy to Vercel under custom domain or `the-edit-admin.vercel.app`
+
+- `apps/admin/` Next.js scaffold
+- Supabase Auth with email allowlist (just [sidd.nyati96@gmail.com](mailto:sidd.nyati96@gmail.com))
+- `/runs` — list runs from `magazine_run_steps` grouped by run_id
+- `/runs/[runId]/pick` — 7 slots × 4 thumbnails, click to set `picked=true`
+- `/api/sign-url` — server-side signed URL generation for the magazine-assets bucket
+- Deploy to Vercel under custom domain or `the-edit-admin.vercel.app`
 
 Effort: 6-8 hours. ~250-400 lines of code.
 
@@ -124,10 +127,11 @@ Effort: 6-8 hours. ~250-400 lines of code.
 Where: GitHub Actions or Vercel Cron in the-edit repo.
 
 Concrete:
-- [ ] `.github/workflows/weekly-draft.yml` — cron `0 14 * * 0` (Sunday 2pm ET)
-- [ ] Job runs `npm run draft` with `MAGAZINE_AUTO_APPROVE=false` — gates surface as GitHub issue comments awaiting approval
-- [ ] On approval (label or comment), trigger `npm run imagine` then notify Sid
-- [ ] Sid runs `npm run pick` locally, then `npm run publish` from CLI
+
+- `.github/workflows/weekly-draft.yml` — cron `0 14 * * 0` (Sunday 2pm ET)
+- Job runs `npm run draft` with `MAGAZINE_AUTO_APPROVE=false` — gates surface as GitHub issue comments awaiting approval
+- On approval (label or comment), trigger `npm run imagine` then notify Sid
+- Sid runs `npm run pick` locally, then `npm run publish` from CLI
 
 Effort: 2-3 hours.
 
@@ -137,11 +141,12 @@ Effort: 2-3 hours.
 two static frames as a scroll sequence.
 
 Concrete:
-- [ ] Purchase Kling API access
-- [ ] Add `MAGAZINE_KLING_CAP_USD` env (default $1)
-- [ ] Add `coverMotion` slot to `imagine.ts` calling Kling instead of Gemini
-- [ ] Update prompt executor to emit motion direction without naming Kling
-- [ ] Update manifest `coverTreatment` to `scroll_sequence`
+
+- Purchase Kling API access
+- Add `MAGAZINE_KLING_CAP_USD` env (default $1)
+- Add `coverMotion` slot to `imagine.ts` calling Kling instead of Gemini
+- Update prompt executor to emit motion direction without naming Kling
+- Update manifest `coverTreatment` to `scroll_sequence`
 
 Effort: 3-4 hours after API access is in hand.
 
