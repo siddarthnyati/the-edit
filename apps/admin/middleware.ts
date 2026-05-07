@@ -18,8 +18,10 @@ export function middleware(request: NextRequest) {
   if (auth) {
     const [scheme, encoded] = auth.split(' ');
     if (scheme === 'Basic' && encoded) {
-      const decoded = Buffer.from(encoded, 'base64').toString();
-      const [user, pass] = decoded.split(':');
+      const decoded = decodeBasicAuth(encoded);
+      const separator = decoded?.indexOf(':') ?? -1;
+      const user = separator >= 0 ? decoded!.slice(0, separator) : '';
+      const pass = separator >= 0 ? decoded!.slice(separator + 1) : '';
       if (user === expectedUser && pass === expectedPass) {
         return NextResponse.next();
       }
@@ -36,3 +38,11 @@ export const config = {
   // Run on every page + API route; skip Next internals and static assets
   matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 };
+
+function decodeBasicAuth(encoded: string): string | null {
+  try {
+    return atob(encoded);
+  } catch {
+    return null;
+  }
+}
