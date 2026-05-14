@@ -1,6 +1,24 @@
 # the-edit Model Handoff
 
-Last updated: 2026-05-10
+Last updated: 2026-05-14 (wardrobe basics V1 shipped)
+
+## Wardrobe basics catalog (2026-05-14)
+
+Separate from the Magazine pipeline. Generates SSENSE-style product shots of staple wardrobe items for styleMeUp's starter pack.
+
+- `wardrobe_basics` table (RLS, service-role only) — 20 rows after first run: 10 men, 10 women
+- `wardrobe-basics` Storage bucket (public read) — `{gender}/{slug}.png`
+- `src/scripts/basics.ts` — gender-split catalogs (`MEN_CATALOG`, `WOMEN_CATALOG`), hybrid Pro/Flash with auto-fallback on 503
+- Dump/chosen model: every generated image stored, `is_chosen` flag flipped manually to curate
+- First run: $0.78 total (Pro was overloaded, everything fell back to Flash)
+- Public URL pattern: `https://bocvtwwmqphfnwmzdjcc.supabase.co/storage/v1/object/public/wardrobe-basics/{gender}/{slug}.png`
+
+Lessons baked in:
+- Per-category photography templates beat generic editorial prompts (real fix vs gimmicky output)
+- Reference brand anchoring matters (Common Projects, Toteme, Mr Porter give the model a concrete visual target)
+- Pro fallback to Flash with retry+backoff is mandatory — Pro overload is real
+
+
 
 ## What This Repo Is
 
