@@ -1,8 +1,8 @@
 import { anthropic } from '@ai-sdk/anthropic';
-import { generateObject } from 'ai';
 import { z } from 'zod';
 import { BRAND_PREAMBLE, designMd } from '../lib/context.js';
 import { recordCost } from '../lib/cost.js';
+import { generateObjectWithRepair } from '../lib/object-generation.js';
 import type { EditOutput } from './edit.js';
 import type { PromptOutput } from './prompt.js';
 import type { ResearchOutput } from './research.js';
@@ -61,6 +61,19 @@ export async function runQA(input: QAInput): Promise<QAOutput> {
     '## Research sources (for grounding check)',
     JSON.stringify(input.research.sources, null, 2),
     '',
+    '## Approval gate policy',
+    'Use QA as a production safety gate, not as an infinite copy-polish loop.',
+    'APPROVE when the issue has no hard ship blockers, even if you see optional editorial improvements.',
+    'Only use REVISE for hard blockers:',
+    '- incomplete/truncated copy, broken JSON/content shape, missing required sections, or contradictory production instructions',
+    '- exact DESIGN.md hard bans in user-facing copy or generation prompts',
+    '- unsupported factual claims presented as reported facts, especially named designers/houses/counts/dates/market adoption',
+    '- missing required images, missing alt text, or alt text that gives false visual information',
+    '- prompts that can create banned visuals such as visible AI-generated human faces, flat-lays, branded logos, or illegible assets',
+    'Do NOT block on subjective wording preferences, new headline alternatives, marginal Vogue-test taste calls, or optional polish.',
+    'If copy is clearly framed as editorial perspective rather than sourced fact, do not treat it as an unsupported factual claim.',
+    'If a concern is non-blocking, mention it in summary only and keep verdict approve.',
+    '',
     'Perform a full QA pass:',
     '1. Vogue test — would a Vogue editor have written every line?',
     '2. Banned language — any string from DESIGN.md §4?',
@@ -73,7 +86,8 @@ export async function runQA(input: QAInput): Promise<QAOutput> {
     'Revise requires exact section + replacement requirement for every issue found.',
   ].join('\n');
 
-  const { object, usage, providerMetadata } = await generateObject({
+  const { object, usage, providerMetadata } = await generateObjectWithRepair({
+    repairLabel: 'qa',
     model: anthropic(model),
     schema: QAReportSchema,
     messages: [

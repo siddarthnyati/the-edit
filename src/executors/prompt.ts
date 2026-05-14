@@ -1,8 +1,8 @@
 import { anthropic } from '@ai-sdk/anthropic';
-import { generateObject } from 'ai';
 import { z } from 'zod';
 import { BRAND_PREAMBLE } from '../lib/context.js';
 import { recordCost } from '../lib/cost.js';
+import { generateObjectWithRepair } from '../lib/object-generation.js';
 import type { EditOutput } from './edit.js';
 import type { RankOutput } from './rank.js';
 
@@ -25,8 +25,12 @@ const BANNED_PROMPT_TOKENS = [
 ];
 
 function checkPromptText(label: string, text: string): string | null {
-  const lower = text.toLowerCase();
+  let lower = text.toLowerCase();
   for (const token of BANNED_PROMPT_TOKENS) {
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    lower = lower
+      .replace(new RegExp(`\\b(no|never include|avoid|without)\\s+${escaped}\\b`, 'g'), '')
+      .replace(new RegExp(`\\b${escaped}\\s+(is|are)\\s+(banned|forbidden|not allowed)\\b`, 'g'), '');
     if (lower.includes(token)) {
       return `${label} contains banned token "${token}"`;
     }
@@ -71,6 +75,12 @@ function validatePromptSuite(suite: { coverStart: { prompt: string; altText: str
   return issues;
 }
 
+const AssetPromptSlotSchema = z.object({
+  slug: z.string(),
+  prompt: z.string(),
+  altText: z.string(),
+});
+
 const AssetPromptSuiteSchema = z.object({
   coverStart: z.object({
     prompt: z.string().describe('Nano Banana prompt for the cover opening frame'),
@@ -82,20 +92,31 @@ const AssetPromptSuiteSchema = z.object({
   }),
   coverMotion: z.object({
     prompt: z.string().describe('Kling motion prompt for the single cover video'),
-    durationSeconds: z.literal(5),
+    durationSeconds: z.number().optional(),
     altText: z.string(),
   }),
-  trendCardPrompts: z.array(z.object({
-    slug: z.string(),
-    prompt: z.string(),
-    altText: z.string(),
-  })).length(3),
-  curatorCardPrompts: z.array(z.object({
-    slug: z.string(),
-    prompt: z.string(),
-    altText: z.string(),
-  })).min(1).max(2),
+  trendCardPrompts: z.array(AssetPromptSlotSchema).length(3),
+  curatorCardPrompts: z.array(AssetPromptSlotSchema).min(1).max(3),
   promptNotes: z.string().describe('Any constraints or alternatives the human running these tools should know'),
+});
+
+const GeneratedAssetPromptSuiteSchema = z.object({
+  coverStart: z.object({
+    prompt: z.string(),
+    altText: z.string(),
+  }),
+  coverEnd: z.object({
+    prompt: z.string(),
+    altText: z.string(),
+  }),
+  coverMotion: z.object({
+    prompt: z.string(),
+    durationSeconds: z.number().optional(),
+    altText: z.string(),
+  }),
+  trendCardPrompts: z.array(AssetPromptSlotSchema).min(1).max(6),
+  curatorCardPrompts: z.array(AssetPromptSlotSchema).min(0).max(6).default([]),
+  promptNotes: z.string().optional(),
 });
 
 export type PromptInput = {
@@ -108,9 +129,10 @@ export type PromptOutput = z.infer<typeof AssetPromptSuiteSchema>;
 export async function runPrompt(input: PromptInput): Promise<PromptOutput> {
   const model = process.env['MAGAZINE_PROMPT_MODEL'] ?? 'claude-sonnet-4-6';
 
-  const { object, usage } = await generateObject({
+  const { object, usage } = await generateObjectWithRepair({
+    repairLabel: 'prompt',
     model: anthropic(model),
-    schema: AssetPromptSuiteSchema,
+    schema: GeneratedAssetPromptSuiteSchema,
     system: [
       BRAND_PREAMBLE,
       '',
@@ -139,11 +161,12 @@ export async function runPrompt(input: PromptInput): Promise<PromptOutput> {
       '- Lead with the garment description: cut, fabric, color, era reference.',
       '- Then setting: studio lighting type, background tone.',
       '- End with editorial register cues: "magazine quality", "editorial sharp focus on textile".',
-      '- Cover motion: defer for V2. Use static rendered_hero treatment — single hero garment.',
+      '- Cover motion: defer for V2. The coverMotion field is a static placeholder only: describe no rotation, no motion, no camera move.',
       '',
       'BACKGROUNDS — strict rules:',
-      '- Use ONLY: "true black void background, #000000, no gradient" or "warm off-white seamless studio, no texture".',
-      '- NEVER use: gradient, color cast, blue-tint, textured background, pattern background.',
+      '- Magazine assets MUST use: "True black void background, #000000, no gradient, no color cast."',
+      '- Reserve "bone background, #FAFAFA, no texture, no color cast" for Sanctuary cutout product images only; this issue is Magazine, so default to true black.',
+      '- NEVER use: warm off-white, gradient, color cast, blue-tint, textured background, pattern background.',
       '',
       'ALT TEXT — must lead with physical descriptors per DESIGN.md §13:',
       '- First 100 chars MUST contain at least one of: a fabric (denim/cotton/wool/silk/linen/leather/cashmere/jersey/velvet/corduroy/knit/satin) OR a color (black/white/navy/indigo/cream/charcoal/camel/oat/ivory).',
@@ -159,8 +182,12 @@ export async function runPrompt(input: PromptInput): Promise<PromptOutput> {
       '## Trend cards',
       input.draft.trendCards.map((c) => `${c.slug}: ${c.headline} — ${c.body}`).join('\n'),
       '',
+      '## Curator cards',
+      input.draft.curatorRotations.map((c) => `${c.slug}: ${c.headline} — ${c.body}`).join('\n'),
+      '',
       'Generate the full asset prompt suite for this issue.',
-      'Each prompt MUST include explicit instructions: no flat-lay, no top-down, no brand logos, no anatomical close-ups.',
+      'Create exactly one curatorCardPrompt for each curator card slug listed above. Do not invent or rename curator slugs.',
+      'Each prompt MUST avoid flat-lay, top-down, brand logos, and anatomical close-ups.',
       'Vary the suggested camera angle across variants (front / three-quarter / profile / back).',
       'Write alt text in editorial voice — not captions.',
     ].join('\n'),
@@ -170,10 +197,12 @@ export async function runPrompt(input: PromptInput): Promise<PromptOutput> {
   recordCost(estimatedCostUsd, 'prompt');
   console.log(`[prompt] ~$${estimatedCostUsd.toFixed(4)} | ${usage.promptTokens}p + ${usage.completionTokens}c tokens`);
 
+  const suite = normalizePromptSuite(object, input.draft);
+
   // Validate against the ban list. If anything slipped through, log issues
   // and throw — orchestrator catches and the operator can either rerun or
   // adjust. Cheaper than letting QA catch it on the full DESIGN.md pass.
-  const issues = validatePromptSuite(object);
+  const issues = validatePromptSuite(suite);
   if (issues.length > 0) {
     console.warn(`[prompt] post-generation validation found ${issues.length} issue(s):`);
     issues.forEach((i) => console.warn(`  - ${i}`));
@@ -183,5 +212,123 @@ export async function runPrompt(input: PromptInput): Promise<PromptOutput> {
     );
   }
 
-  return object;
+  return suite;
+}
+
+function normalizePromptSuite(
+  suite: z.infer<typeof GeneratedAssetPromptSuiteSchema>,
+  draft: EditOutput,
+): PromptOutput {
+  const trendCardPrompts = draft.trendCards.map((card) =>
+    normalizeCardSlot(findSlot(suite.trendCardPrompts, card.slug) ?? fallbackSlot(card), card),
+  );
+  const curatorCardPrompts = draft.curatorRotations.map((card) =>
+    normalizeCardSlot(findSlot(suite.curatorCardPrompts, card.slug) ?? fallbackSlot(card), card),
+  );
+
+  return {
+    coverStart: normalizeCoverSlot(suite.coverStart),
+    coverEnd: normalizeCoverSlot(suite.coverEnd),
+    coverMotion: {
+      ...suite.coverMotion,
+      prompt: normalizePromptBackground(stripMotionContradictions(suite.coverMotion.prompt)),
+    },
+    trendCardPrompts,
+    curatorCardPrompts,
+    promptNotes: suite.promptNotes ?? 'Normalized to the issue card slugs before validation.',
+  };
+}
+
+function findSlot(slots: { slug: string; prompt: string; altText: string }[], slug: string) {
+  return slots.find((slot) => slot.slug === slug);
+}
+
+function normalizeCoverSlot(slot: { prompt: string; altText: string }) {
+  return {
+    prompt: normalizePromptBackground(slot.prompt),
+    altText: slot.altText,
+  };
+}
+
+function normalizeCardSlot(
+  slot: { slug: string; prompt: string; altText: string },
+  card: EditOutput['trendCards'][number] | EditOutput['curatorRotations'][number],
+) {
+  const normalizedPrompt = normalizePromptBackground(slot.prompt);
+  return {
+    ...slot,
+    prompt: normalizedPrompt,
+    altText: checkAltText(slot.slug, slot.altText) ? fallbackAltText(card) : slot.altText,
+  };
+}
+
+function fallbackSlot(card: EditOutput['trendCards'][number] | EditOutput['curatorRotations'][number]) {
+  const garment = garmentForKind(card.kind);
+  const color = colorForKind(card.kind);
+  return {
+    slug: card.slug,
+    prompt: [
+      `${color} ${garment}, ${card.deck.toLowerCase()}.`,
+      'True black void background, #000000, no gradient, no color cast.',
+      'Garment-only editorial product photograph, magazine quality, sharp focus on textile and cut.',
+    ].join(' '),
+    altText: fallbackAltText(card),
+  };
+}
+
+function fallbackAltText(card: EditOutput['trendCards'][number] | EditOutput['curatorRotations'][number]): string {
+  const garment = garmentForKind(card.kind);
+  const color = colorForKind(card.kind);
+  return `${color} ${garment}, ${card.deck.toLowerCase()} — ${card.headline.toLowerCase()}`;
+}
+
+function normalizePromptBackground(prompt: string): string {
+  const compositionSafe = prompt
+    .replace(/\bfrom above\b/gi, 'from a three-quarter angle')
+    .replace(/\btop[- ]down\b/gi, 'three-quarter')
+    .replace(/\boverhead view\b/gi, 'front-facing editorial view')
+    .replace(/\bflat[- ]?lay\b/gi, 'garment-only studio photograph')
+    .replace(/\blaid flat\b/gi, 'structured on a studio form')
+    .replace(/\bbirds-eye\b/gi, 'front-facing')
+    .replace(/\bbird's-eye\b/gi, 'front-facing')
+    .replace(/\bbirdseye\b/gi, 'front-facing');
+
+  const withMagazineBackground = compositionSafe
+    .replace(/warm off-white seamless studio,?\s*no texture\.?/gi, 'True black void background, #000000, no gradient, no color cast.')
+    .replace(/bone background,?\s*#FAFAFA,?\s*no texture,?\s*no color cast\.?/gi, 'True black void background, #000000, no gradient, no color cast.');
+
+  if (/true black void background/i.test(withMagazineBackground)) return withMagazineBackground;
+  return `${withMagazineBackground} True black void background, #000000, no gradient, no color cast.`;
+}
+
+function garmentForKind(kind: EditOutput['trendCards'][number]['kind']): string {
+  const map: Record<typeof kind, string> = {
+    jacket: 'wool jacket',
+    tee: 'cotton tee',
+    denim: 'denim jeans',
+    trouser: 'wool trouser',
+    skirt: 'wool skirt',
+    boot: 'leather boot',
+    sneaker: 'leather sneaker',
+    oxford: 'leather oxford shoe',
+    cap: 'cotton cap',
+  };
+  return map[kind];
+}
+
+function colorForKind(kind: EditOutput['trendCards'][number]['kind']): string {
+  if (kind === 'denim') return 'Dark indigo';
+  if (kind === 'boot' || kind === 'oxford' || kind === 'sneaker') return 'Black';
+  if (kind === 'cap' || kind === 'tee') return 'White';
+  return 'Charcoal';
+}
+
+function stripMotionContradictions(prompt: string): string {
+  return prompt
+    .replace(/\b(?:slow\s+)?(?:180|360)[-\s]?degree rotation\b/gi, 'static editorial product frame')
+    .replace(/\bno static frame\b/gi, 'no camera motion')
+    .replace(/\bno camera static treatment\b/gi, 'no camera motion')
+    .replace(/\brotation\b/gi, 'static frame')
+    .replace(/\bmotion\b/gi, 'static treatment')
+    .replace(/\bcamera move\b/gi, 'locked camera');
 }

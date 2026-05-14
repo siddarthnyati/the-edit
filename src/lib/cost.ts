@@ -16,7 +16,7 @@ let imagineUsd = 0;
 let perStepUsd: Record<string, number> = {};
 let currentStep: string | null = null;
 
-const HARD_CAP_USD = parseFloat(process.env['MAGAZINE_HARD_CAP_USD'] ?? '2');
+const HARD_CAP_USD = parseFloat(process.env['MAGAZINE_HARD_CAP_USD'] ?? '4');
 const BUDGET_USD = parseFloat(process.env['MAGAZINE_BUDGET_USD'] ?? '1.5');
 const WEB_SEARCH_CAP_USD = parseFloat(process.env['MAGAZINE_WEB_SEARCH_CAP_USD'] ?? '1');
 const IMAGINE_CAP_USD = parseFloat(process.env['MAGAZINE_IMAGINE_CAP_USD'] ?? '3');

@@ -13,8 +13,17 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    "plugins": [{ "name": "next" }],
-    "paths": { "@/*": ["./*"] }
+    "plugins": [{ "name": "next" }, { "name": "workflow" }],
+    "paths": {
+      "@/*": ["./*"],
+      "@ai-sdk/anthropic": ["./node_modules/@ai-sdk/anthropic"],
+      "@anthropic-ai/sdk": ["./node_modules/@anthropic-ai/sdk"],
+      "@google/genai": ["./node_modules/@google/genai"],
+      "@supabase/supabase-js": ["./node_modules/@supabase/supabase-js"],
+      "ai": ["./node_modules/ai"],
+      "dotenv": ["./node_modules/dotenv"],
+      "zod": ["./node_modules/zod"]
+    }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]

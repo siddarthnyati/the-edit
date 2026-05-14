@@ -1,6 +1,6 @@
 # the-edit Architecture, Costs, Prompts, and Deploy Notes
 
-Last audited: 2026-05-07 on branch `feat/admin-app`.
+Last audited: 2026-05-07 on branch `main`.
 
 ## What this repo does
 
@@ -21,16 +21,19 @@ flowchart TD
   G --> H[approval gate 2<br/>issue draft and prompts<br/>cost: $0]
   H --> I[npm run imagine -- runId<br/>Gemini image generation<br/>current estimate: $1.42-$1.58]
   I --> J[npm run pick or apps/admin<br/>human variant picker<br/>cost: $0]
-  J --> K[npm run publish -- runId<br/>Supabase manifest write<br/>cost: $0]
+  J --> K[npm run publish or Publish to app<br/>Supabase manifest write<br/>cost: $0]
   K --> L[magazine_issue_manifests<br/>published issue]
+  L --> N[GET /api/issues/latest<br/>Vercel public read API<br/>cost: $0]
+  N --> O[StyleMeUp Discover<br/>remote Magazine grid<br/>fallback: local Vol. 18]
 
   B -. writes .-> S1[magazine_search_archive]
   A -. writes each step .-> S2[magazine_run_steps]
   I -. uploads .-> S3[magazine-assets bucket]
   I -. indexes .-> S4[magazine_image_variants]
   J -. sets picked=true .-> S4
-  M[apps/admin on Vercel<br/>Next.js picker] -. reads/writes .-> S4
+  M[apps/admin on Vercel<br/>Next.js dashboard + picker] -. reads/writes .-> S4
   M -. signs images .-> S3
+  M -. publishes safe payload .-> L
 ```
 
 ## Cost Model By Step
@@ -46,7 +49,8 @@ flowchart TD
 | `approval` | Human stdin gate | No model call. | $0. |
 | `imagine` | Gemini image generation | `cover-*`: `gemini-3-pro-image-preview` at $0.10/image. `trend-*` and `curator-*`: `gemini-2.5-flash-image` at $0.039/image. Default 4 variants per slot. | With 2 cover slots, 3 trend slots, and 1-2 curator slots: about $1.42-$1.58. Older docs saying $1.09 assumed all 28 images used Flash at $0.039. |
 | `pick` | CLI Quick Look or Next admin app | Human selection, Supabase update only. | $0 plus normal Supabase/Vercel free-tier usage. |
-| `publish` | TypeScript manifest assembler | No model call. Writes `magazine_issue_manifests`. | $0. |
+| `publish` | TypeScript manifest assembler | No model call. Writes `magazine_issue_manifests` plus app-safe `issue_payload`. | $0. |
+| `api/issues/latest` | Vercel Next route + Supabase service role server-side | No model call. Reads latest approved issue and signs image URLs. | $0 beyond normal Vercel/Supabase usage. |
 
 Important cost note: the default hard cap is still `$2.00`. With Pro cover images enabled, a fresh full run can land near `$2.06` (`about $0.48` draft plus `about $1.58` imagine). Either raise `MAGAZINE_HARD_CAP_USD` slightly for full Pro-cover runs, or route covers back to the cheaper Flash image model to stay comfortably under $2.
 
@@ -76,45 +80,38 @@ Banned copy and visuals are defined in DESIGN.md section 4. Treat them as hard c
 
 ## Last Two Iterations
 
-By git history, the last two iterations are:
+The last two product iterations are:
 
-1. `cafed4d` on 2026-05-07: `feat(admin): Vercel Hobby admin app for variant picker`
-   - Added `apps/admin`, a Next.js 15 App Router admin UI.
-   - Added run list, per-run variant grid, server action to set `picked=true`, signed Supabase Storage image URLs, Basic Auth middleware, and Vercel deployment notes.
-   - This replaces the local-only `npm run pick` workflow with a browser picker while keeping the CLI picker compatible.
+1. Current 2026-05-07 implementation: real app publishing contract + useful admin preview.
+   - Added app-safe issue payloads to manifests.
+   - Added public `GET /api/issues/latest` with signed image URLs and no Basic Auth.
+   - Reworked admin from a runs table into an editorial dashboard and issue preview.
+   - Added `Publish to app` for QA-approved, fully picked runs.
+   - Wired StyleMeUp Discover to the public API with local Vol. 18 fallback.
 
-2. `ef1ea1c` on 2026-05-06: `edit: enforce DESIGN.md section 5.5 headline patterns via Zod refines + system prompt`
-   - Added deterministic headline checks to prevent textbook-style headlines.
-   - Enforced short declarative headlines, no question/exclamation endings, no colons, and no question openers.
-   - Taught the editor prompt four headline shapes: Reversal, Possessive, Date Stamp, and Single Verb.
+2. Prior 2026-05-07 admin iteration: Vercel Hobby admin picker.
+   - Added `apps/admin`, run listing, variant thumbnails, signed image previews, Basic Auth, and per-slot picking.
+   - Replaced the local-only `npm run pick` workflow with a browser picker while keeping CLI compatibility.
 
-The iteration immediately before those, `8ae83cf`, moved several QA failures earlier in the pipeline by adding prompt-suite validation for flat-lays, gradient/tinted backgrounds, asset tool-name leaks, brand names, anatomical close-ups, and weak alt text.
+The immediately preceding quality iteration enforced DESIGN.md headline patterns and prompt-suite bans earlier in the pipeline, reducing QA-only catch cases.
 
-## Vercel Deployment Diagnosis
+## Vercel Deployment State
 
-Current state from the Vercel CLI on 2026-05-07:
+Current state on 2026-05-07:
 
-- CLI is logged in as `siddnyati96-5965`.
 - Vercel project exists: `the-edit`.
-- Latest production URL: `https://the-edit-lime.vercel.app`.
-- Latest production deployment is marked `Ready`, but the live page returns `HTTP 404`.
-- Build logs show Vercel cloned `github.com/siddarthnyati/the-edit` on branch `main` at commit `ef1ea1c`.
-- Build logs show `Builds: . [0ms]`, meaning it built the repo root instead of the admin app.
-- There is no local `.vercel/project.json`, so this working directory is not linked locally.
+- Production domain: `https://the-edit-lime.vercel.app`.
+- The app is now visibly serving the admin UI, so the earlier `404` root-directory issue was fixed by pointing Vercel at `apps/admin`.
+- Latest production deployment from this push: `https://the-edit-gxmz1fzit-siddnyati96-5965s-projects.vercel.app`, aliased to `https://the-edit-lime.vercel.app`.
+- `/` returns `401` without Basic Auth.
+- `/api/issues/latest` bypasses Basic Auth and currently returns `404 No published issue found` because no approved issue manifest exists yet.
 
-Root cause: Vercel is deploying `main` from the repo root, while the admin app exists on `feat/admin-app` under `apps/admin`.
+Expected checks after redeploy:
 
-Fix path:
-
-1. Get the admin app onto the production branch, either by merging/pushing `feat/admin-app` to `main`, or by changing the Vercel production branch to `feat/admin-app`.
-2. In Vercel Project Settings, set Root Directory to `apps/admin`.
-3. Add production env vars before redeploy:
-   - `NEXT_PUBLIC_SUPABASE_URL=https://bocvtwwmqphfnwmzdjcc.supabase.co`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `SUPABASE_SERVICE_ROLE_KEY`
-   - `ADMIN_USERNAME=admin`
-   - `ADMIN_PASSWORD`
-4. Redeploy. Expected unauthenticated result after the fix: `HTTP 401` with a Basic Auth challenge, not `HTTP 404`.
+1. Authenticated `/` shows the editorial dashboard.
+2. Publish one approved, fully picked run.
+3. `/api/issues/latest` returns `200` with only approved app-safe issue fields.
+4. Signed image URLs load.
 
 Useful CLI path after the dashboard project is corrected:
 
@@ -144,5 +141,5 @@ Local verification from this audit:
 Current status there:
 
 - It is untracked in `../styleMeUp`, so there is no git commit history for it yet.
-- Filesystem last modified time: 2026-05-07 15:07:13 EDT.
-- Content: five interview practice rounds for Anthropic, Meta, OpenAI, Stripe, and cross-cutting Senior PM interviews, plus a 0-10 scoring rubric and a template for asking Claude to score answers.
+- Latest content now includes nine answer-free practice rounds: Anthropic, Meta, OpenAI, Stripe, cross-cutting Senior PM, AI evals/safety, non-AI products under AI pressure, platform/unit economics, and CEO/VP product taste.
+- It also includes a 0-10 scoring rubric and a template for asking Claude to score answers.

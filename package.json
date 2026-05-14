@@ -10,6 +10,7 @@
     "pick": "tsx src/scripts/pick.ts",
     "publish": "tsx src/scripts/publish.ts",
     "backfill-archive": "tsx src/scripts/backfill-archive.ts",
+    "migrate:remote": "bash scripts/apply-remote-migrations.sh",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts"
   },

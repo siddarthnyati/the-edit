@@ -9,10 +9,17 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^1.2.12",
+    "@anthropic-ai/sdk": "^0.93.0",
+    "@google/genai": "^1.52.0",
     "@supabase/supabase-js": "^2.49.0",
+    "ai": "^4.3.19",
+    "dotenv": "^17.4.2",
     "next": "^15.1.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "workflow": "^4.2.4",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -5,6 +5,7 @@ import type { RunConfig, MagazineIssueManifest } from '../orchestrator/types.js'
 import type { ResearchOutput } from '../executors/research.js';
 import type { EditOutput } from '../executors/edit.js';
 import type { PromptOutput } from '../executors/prompt.js';
+import type { RankOutput } from '../executors/rank.js';
 
 // Usage: npm run publish -- <runId>
 //
@@ -52,6 +53,20 @@ async function loadStep<T>(rid: string, step: string): Promise<T> {
     throw new Error(`Run ${rid.slice(0, 8)}… has no complete '${step}' step. Run draft first.`);
   }
   return data[0]!.output as T;
+}
+
+async function loadOptionalStep<T>(rid: string, step: string): Promise<T | undefined> {
+  const { data, error } = await supabase
+    .from('magazine_run_steps')
+    .select('output, status, error')
+    .eq('run_id', rid)
+    .eq('step', step)
+    .eq('status', 'complete')
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (error) throw new Error(error.message);
+  return data?.[0]?.output as T | undefined;
 }
 
 async function nextVolume(): Promise<number> {
@@ -109,6 +124,7 @@ async function main() {
 
   // Load the artifacts the publisher needs from the run record.
   const research = await loadStep<ResearchOutput>(rid, 'research');
+  const ranked = await loadOptionalStep<RankOutput>(rid, 'rank');
   const draft = await loadStep<EditOutput>(rid, 'edit');
   const prompts = await loadStep<PromptOutput>(rid, 'prompt');
 
@@ -138,6 +154,7 @@ async function main() {
     draft,
     prompts,
     research,
+    ...(ranked ? { ranked } : {}),
     volume,
     assetPaths,
   });

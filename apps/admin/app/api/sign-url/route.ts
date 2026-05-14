@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { getSupabaseAdmin } from '@/lib/supabase';
 
 // GET /api/sign-url?path=<storage-path>
 // Returns a 1-hour signed URL for a file in the magazine-assets bucket.
@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   const path = url.searchParams.get('path');
   if (!path) return NextResponse.json({ error: 'path required' }, { status: 400 });
 
-  const { data, error } = await supabaseAdmin.storage
+  const { data, error } = await getSupabaseAdmin().storage
     .from('magazine-assets')
     .createSignedUrl(path, 3600);
 

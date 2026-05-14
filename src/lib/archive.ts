@@ -27,14 +27,15 @@ export async function archiveSources(args: {
   const urls = args.sources.map((s) => s.url);
   const { data: existing } = await supabase
     .from('magazine_search_archive')
-    .select('url, trend_keywords, source_run_ids')
+    .select('url, trend_keywords, source_run_ids, first_seen_at')
     .in('url', urls);
 
-  const existingMap = new Map<string, { trend_keywords: string[]; source_run_ids: string[] }>();
+  const existingMap = new Map<string, { trend_keywords: string[]; source_run_ids: string[]; first_seen_at: string }>();
   for (const row of existing ?? []) {
     existingMap.set(row.url as string, {
       trend_keywords: (row.trend_keywords as string[]) ?? [],
       source_run_ids: (row.source_run_ids as string[]) ?? [],
+      first_seen_at: (row.first_seen_at as string | null) ?? new Date().toISOString(),
     });
   }
 
@@ -50,7 +51,7 @@ export async function archiveSources(args: {
       signal_type: s.signalType,
       trend_keywords: mergedKeywords,
       raw_snippet: args.rawSnippets?.[s.url] ?? null,
-      first_seen_at: prior ? undefined : now,
+      first_seen_at: prior?.first_seen_at ?? now,
       last_seen_at: now,
       source_run_ids: mergedRunIds,
     };

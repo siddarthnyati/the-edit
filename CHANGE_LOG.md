@@ -1,5 +1,106 @@
 # the-edit Change Log
 
+## 2026-05-10 (First full web run completed + production hardening)
+
+- Completed production run `c83e00b0-e082-41f7-ad13-782c333b0f57` end-to-end from the admin runner:
+  - QA approved.
+  - 32 image variants generated.
+  - 7/7 required slots auto-picked.
+  - Manifest published as `vol-19-structured-shoulder`.
+  - Public `GET /api/issues/latest` returns `200` with signed image URLs.
+- Fixed the real usage-limit follow-up:
+  - The Anthropic credit issue was resolved externally.
+  - The internal `$2.00` hard cap then blocked after images had already uploaded.
+  - Raised production `MAGAZINE_HARD_CAP_USD` to `4.00` and changed the repo default/example to `4.00`.
+- Hardened future runs:
+  - QA now distinguishes hard ship blockers from subjective editorial polish and should approve when no hard blocker remains.
+  - `coverMotion` no longer requires a video-duration field while V2 motion is deferred.
+  - Published app payloads now use app-safe `whyNow` and `sourceSummary` copy instead of raw rank/research rationale, preventing named-house/count/date claims from leaking into StyleMeUp.
+- Verification:
+  - `npm run typecheck`
+  - `cd apps/admin && npm run typecheck && npm run build`
+  - Public endpoint check: no prompts, service-role keys, raw errors, run-step internals, or named-house rationale leaks.
+
+## 2026-05-08 (Web-native Magazine Workflow + schema repair)
+
+- Changed:
+  - Added AI SDK schema repair + one strict retry for structured stages: `research/structure`, `rank`, `edit`, `prompt`, and `qa`.
+  - Made fatal/model error summaries safe to persist and print without dumping raw SDK objects.
+  - Aligned research prompt with the actual web-search cap of 3 searches.
+  - Added source-quality guardrails: minimum usable source threshold, publisher diversity check, one last-chance targeted search after backoff, then `blocked_needs_sources` before rank/edit if quality is still weak.
+  - Added Vercel Workflow DevKit to the admin app with `apps/admin/workflows/magazine-pipeline.ts`.
+  - Added web run control APIs: create, status, cancel, and retry.
+  - Added `magazine_runs` plus richer step metadata migration in `20260508_web_runner.sql`.
+  - Added admin `Run issue`, Workflow status, step timeline, cancel/retry, and active-run auto-refresh.
+  - Added auto-pick step so unattended runs can publish when QA approves and all required assets exist.
+- Why:
+  - The latest real run failed because `edit` did not satisfy the Zod schema. The app should repair/retry once, then block visibly instead of crashing in a terminal.
+  - The operator experience should be one synchronous admin surface, not separate terminal commands.
+- Affected:
+  - `src/lib/object-generation.ts`
+  - `src/executors/research.ts`
+  - `src/executors/rank.ts`
+  - `src/executors/edit.ts`
+  - `src/executors/prompt.ts`
+  - `src/executors/qa.ts`
+  - `src/lib/supabase.ts`
+  - `src/orchestrator/index.ts`
+  - `apps/admin/lib/runs.ts`
+  - `apps/admin/workflows/magazine-pipeline.ts`
+  - `apps/admin/app/api/runs/**`
+  - `apps/admin/app/page.tsx`
+  - `apps/admin/app/runs/[runId]/page.tsx`
+  - `apps/admin/next.config.ts`
+  - `apps/admin/vercel.json`
+  - `supabase/migrations/20260508_web_runner.sql`
+- Verification:
+  - `npm run typecheck` passes.
+  - `cd apps/admin && npm run typecheck` passes.
+  - `cd apps/admin && npm run build` passes, including generated Workflow routes.
+
+### 2026-05-08 follow-up
+
+- Removed the weekly cron trigger. Magazine runs are ad hoc by design: click `Run issue` when the product needs a fresh issue, then let StyleMeUp refresh from the published issue API.
+- Applied pending Supabase migrations through the Supabase Management API using the user-provided access token:
+  - `20260507_issue_payload.sql`
+  - `20260508_web_runner.sql`
+- Replaced the pending Workflow dispatch path with a deterministic `/api/runs/[runId]/advance` step runner after Vercel Workflow runs stayed `pending`.
+- Added embedded StyleMeUp context fallback for production so Vercel no longer needs a sibling `styleMeUp` checkout to load `DESIGN.md`/`AGENTS.md`.
+- Production smoke reached the Anthropic API from Vercel and is now blocked by Anthropic billing: `credit balance is too low`.
+
+## 2026-05-07 (Real app publishing contract + editorial admin)
+
+- Changed:
+  - Extended the published manifest contract with an app-safe issue payload for StyleMeUp: cover, trend cards, curator cards, body/deck/headline copy, garment kind, slugs, base selections, source/history/why-now summary, and asset paths.
+  - Added `supabase/migrations/20260507_issue_payload.sql` for `run_id` and `issue_payload`.
+  - Added a backwards-compatible persistence fallback that stores `issuePayload` inside `asset_paths` if the live database has not received the new columns yet.
+  - Added public `GET /api/issues/latest` in `apps/admin`, excluded it from Basic Auth, and signed image URLs server-side.
+  - Reworked admin home into an editorial dashboard with latest issue, latest run, QA, picked slots, cost, readiness, and publish status.
+  - Reworked run detail into issue preview + picker + publish surface.
+  - Added a server-side `Publish to app` action for QA-approved, fully picked runs; it writes a manifest only and does not rerun models or images.
+- Why:
+  - The pipeline already produced content, but StyleMeUp could not consume the published issue and the admin UI was still too operational to be useful for product review.
+  - The app should receive only approved, app-safe content through Vercel, not direct service-role Supabase access.
+- Affected:
+  - `src/orchestrator/types.ts`
+  - `src/executors/publish.ts`
+  - `src/lib/supabase.ts`
+  - `src/scripts/publish.ts`
+  - `apps/admin/lib/magazine.ts`
+  - `apps/admin/app/page.tsx`
+  - `apps/admin/app/runs/[runId]/page.tsx`
+  - `apps/admin/app/api/issues/latest/route.ts`
+  - `apps/admin/middleware.ts`
+  - `NEXT_STEPS.md`
+  - `MODEL_HANDOFF.md`
+- Verification:
+  - `npm run typecheck` passes.
+  - `cd apps/admin && npm run typecheck` passes.
+- Next:
+  - deploy `apps/admin`
+  - publish one approved picked run
+  - verify `/api/issues/latest` returns app-safe payload with signed image URLs
+
 ## 2026-05-05 (Steps 1 + 2 shipped — V1 fully optimized)
 
 - Changed:
@@ -33,7 +134,7 @@
     - V2: in-app variant picker (replace CLI `npm run pick`)
     - V2: bake the asset-tool-name ban into the prompt executor's system prompt (so QA doesn't have to re-catch it every run)
     - V2: Kling motion when API is purchased and base costs are stable
-    - Productionize: scheduled run via `cron` or GitHub Actions
+    - Productionize: on-demand web runner in admin
 
 ## 2026-05-05 (V1 backbone complete: Steps 0 + 5 + 3 + 4 shipped)
 

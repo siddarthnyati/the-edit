@@ -1,8 +1,8 @@
 import { anthropic } from '@ai-sdk/anthropic';
-import { generateObject } from 'ai';
 import { z } from 'zod';
 import { BRAND_PREAMBLE } from '../lib/context.js';
 import { recordCost } from '../lib/cost.js';
+import { generateObjectWithRepair } from '../lib/object-generation.js';
 import type { ResearchOutput } from './research.js';
 import type { RunConfig } from '../orchestrator/types.js';
 
@@ -38,7 +38,8 @@ export type RankOutput = z.infer<typeof RankedIssueSchema>;
 export async function runRank(input: RankInput): Promise<RankOutput> {
   const model = process.env['MAGAZINE_RANK_MODEL'] ?? 'claude-sonnet-4-6';
 
-  const { object, usage } = await generateObject({
+  const { object, usage } = await generateObjectWithRepair({
+    repairLabel: 'rank',
     model: anthropic(model),
     schema: RankedIssueSchema,
     system: BRAND_PREAMBLE,

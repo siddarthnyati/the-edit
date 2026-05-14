@@ -1,93 +1,111 @@
 # the-edit Model Handoff
 
-Last updated: 2026-05-05 (V1 complete, Gemini cap added, smoke-test passed)
+Last updated: 2026-05-10
 
-## What this repo is
+## What This Repo Is
 
-Magazine Weekly orchestration pipeline for StyleMeUp. Researches → ranks
-→ writes → generates 28 image variants → human picks → publishes manifest
-to Supabase. Anthropic for editorial + QA, Gemini Nano Banana for images.
+`the-edit` is the server-side Magazine Weekly pipeline for StyleMeUp. It researches fashion return signals, ranks one editorial direction, writes a Magazine issue, emits image prompts, QA-checks the work, generates image variants, lets a human pick, and publishes an app-safe issue manifest to Supabase.
 
-## V1 status: COMPLETE and verified
+## Current State
 
-Real run from 2026-05-04 produced approved draft with QA `revise` correctly
-catching: Vogue-test failures, ungrounded Lacoste/Prada SS26 claims,
-"Nano Banana" / "Kling" tool name leaks, WCAG alt-text issues.
+- V1 pipeline exists in both CLI and web-admin form.
+- P0 fixes are shipped: storage retry, cross-script cost cap, prompt-suite validation, and Vercel admin picker.
+- The failed `edit` run was not just a logger problem. Structured output now uses repair + one bounded strict retry for `research/structure`, `rank`, `edit`, `prompt`, and `qa`.
+- Admin has an ad hoc run flow: `Run issue` creates a run, `/runs/[runId]` auto-advances one persisted step at a time through `/api/runs/[runId]/advance`, and runs can cancel/retry from the page.
+- Admin is deployed under the Vercel project/domain `the-edit-lime.vercel.app`.
+- Supabase migrations from this session were applied through the Supabase Management API and verified against `information_schema`.
+- Latest production run completed end-to-end from the Vercel admin flow and published a public issue payload.
 
-Gemini smoke test 2026-05-05: 808KB image in 4.5s, on-brand black turtleneck on void.
+## New App Contract
 
-## Run sequence (production)
+Published manifests now include an app-safe payload:
 
-```bash
-cd /Users/siddarthnyati/the-edit
-npm run draft                  # ~$0.50, 3-5 min, pauses at gates
-npm run inspect                # find runId
-npm run imagine -- <runId>     # ~$1.10, 2-3 min, generates 28 images
-npm run pick    -- <runId>     # macOS Quick Look, type 1-4 per slot
-npm run publish -- <runId>     # writes magazine_issue_manifests row
+- cover
+- trend cards
+- curator cards
+- card bodies/decks/headlines
+- garment kind
+- slug
+- baseSelectionIds
+- history / why-now / source summary
+- asset paths
+
+The public app endpoint is:
+
+```text
+GET /api/issues/latest
 ```
 
-For unattended smoke tests: `MAGAZINE_AUTO_APPROVE=true npm run draft`.
+It must remain public and read-only. It uses the service role server-side, signs image URLs for one hour, and must never expose prompts, costs, run steps, service keys, or unpublished variants.
 
-## Costs (verified on 2026-05-04 successful run)
+## Admin Behavior
 
-| Stage | Real cost | Notes |
-|---|---|---|
-| research/search | $0.247 | 47 sources, 5 queries (now capped at 3) |
-| research/structure | $0.027 | 25s wait avoids rate limit |
-| rank | $0.025 | |
-| edit | $0.031 | DESIGN.md §4 excerpt |
-| prompt | $0.040 | Asset prompt suite |
-| qa | $0.109 | Full DESIGN.md (will drop to $0.02 with cache) |
-| **draft total** | **$0.479** | |
-| imagine (28 images) | $1.092 | After Step 3 ships images |
-| **issue total** | **~$1.57** | First run, no cache hits |
-| **steady state** | **~$1.20** | After cache + archive hits |
+- `/` is now an editorial dashboard, not just a runs table.
+- `/` includes `Run issue`, which starts the Magazine run from the browser.
+- `/runs/[runId]` shows draft copy, trend/curator cards, source/history summary, prompt text, picked images, and publish readiness.
+- `/runs/[runId]` also shows run status/current step, a step timeline, cancel, retry, and auto-refresh while queued/running.
+- `Publish to app` only works when QA verdict is `approve` and all seven required slots are picked:
+  - `cover-start`
+  - `cover-end`
+  - `trend-1`
+  - `trend-2`
+  - `trend-3`
+  - `curator-1`
+  - `curator-2`
 
-Hard caps: total $2, web search $1, imagine $3.
+The publish action writes only a manifest. It does not call models or generate images.
 
-## Database (Supabase: drip / `bocvtwwmqphfnwmzdjcc`)
+The default path calls models/images and then auto-picks first variants:
 
-```
-magazine_run_steps           one row per (runId, step)
-magazine_issue_manifests     approved/published issues
-magazine_image_variants      4 variants per slot per run
-magazine_search_archive      cross-run source memory (47 rows after backfill)
+```text
+research -> rank -> edit -> prompt -> qa -> imagine -> pick -> publish
 ```
 
-Storage bucket `magazine-assets`: `{runId}/{slot}/{idx}.png`.
+If QA is `revise` or `reject`, the run is marked `blocked` and image generation/publish do not start. If required image slots are missing, the run blocks at `pick`/`publish`.
 
-All service-role only.
+## Key Files
 
-## Stack
+- Pipeline types: `src/orchestrator/types.ts`
+- Manifest assembly: `src/executors/publish.ts`
+- Supabase persistence: `src/lib/supabase.ts`
+- CLI publish: `src/scripts/publish.ts`
+- Admin helpers: `apps/admin/lib/magazine.ts`
+- Admin run engine: `apps/admin/lib/runs.ts`
+- Run APIs: `apps/admin/app/api/runs/**`
+- Public issue API: `apps/admin/app/api/issues/latest/route.ts`
+- Admin auth middleware: `apps/admin/middleware.ts`
+- Supabase migrations:
+  - `supabase/migrations/20260507_issue_payload.sql`
+  - `supabase/migrations/20260508_web_runner.sql`
 
-- Node 20+ TypeScript strict, `exactOptionalPropertyTypes: true`
-- Vercel AI SDK v4 + `@ai-sdk/anthropic` v1 for `generateObject`
-- Raw `@anthropic-ai/sdk` v0.93 for web search (server-side tool)
-- `@google/genai` v1.52 for Gemini image generation
-- `@supabase/supabase-js` v2 for persistence + storage
-- `zod` for executor schemas
-- `tsx` runtime, `dotenv` with override semantics
+## Verification Snapshot
 
-## Key architectural decisions
+Passing locally:
 
-1. **Two-stage research** — Anthropic web search returns prose + citations, then `generateObject` structures into `TrendCandidate[]`. Stage 2 has a 25s wait to avoid the 30K input-tokens-per-minute rate limit.
-2. **Salvage-on-cap** — when `MAGAZINE_WEB_SEARCH_CAP_USD` is exceeded, research stops issuing new queries but uses sources already gathered.
-3. **Archive write before stage 2** — sources persisted before stage 2's wait, so a stage-2 failure no longer loses paid-for searches.
-4. **Cache prefix in QA** — full DESIGN.md (~21K tokens) wrapped in `providerOptions.anthropic.cacheControl: { type: 'ephemeral' }`. From run 2 onward, reads at 0.1× rate.
-5. **Approval gates pause stdin** — `MAGAZINE_AUTO_APPROVE=true` flag for smoke tests only.
-6. **Image generation outsourced to Gemini** — Anthropic doesn't generate images. Pipeline emits prompts; the imagine executor calls Gemini Nano Banana (`gemini-2.5-flash-image`).
-7. **Picker is CLI for V1** — `npm run pick` opens macOS Quick Look. V2 candidate: Next.js admin app on Vercel.
-8. **App reads manifests** — styleMeUp Expo app should read from `magazine_issue_manifests` via Supabase. Not yet wired (V2 work in styleMeUp repo).
+- `npm run typecheck`
+- `cd apps/admin && npm run typecheck`
+- `cd apps/admin && npm run build`
+- Production run:
+  - Run ID: `c83e00b0-e082-41f7-ad13-782c333b0f57`
+  - Status: `complete`
+  - QA: `approve`
+  - Variants: 32
+  - Required picks: 7/7
+  - Missing required slots: 0
+  - Total persisted cost: about `$2.15`
+- Public API:
+  - `https://the-edit-lime.vercel.app/api/issues/latest` returns `200`
+  - issue slug: `vol-19-structured-shoulder`
+  - title: `YOUR MOTHER'S JACKET. RECUT.`
+  - signed cover image loads as `image/png`
+  - no prompts, service-role keys, raw errors, run-step internals, or named-house rationale leaks are present in the response
 
-## Open V2 work
+Important follow-up from the production run:
 
-See `NEXT_STEPS.md`.
+- The old `$2.00` hard cap was too low for a real full image run. Production `MAGAZINE_HARD_CAP_USD` is now `4.00`, and the repo default was updated to match.
+- QA was too adversarial as a runtime gate. It now has an explicit approval policy: block only hard ship risks, not endless subjective copy polish.
+- Public publish payloads now use app-safe `whyNow/sourceSummary` text instead of raw rank/research rationale.
 
-## Common gotchas
+## Next
 
-- Parent shell's empty `ANTHROPIC_API_KEY` overrides `.env` unless `dotenv` is loaded with `override: true`. Handled in `src/lib/env.ts`.
-- Gemini model name is `gemini-2.5-flash-image` (no `-preview` suffix). Old code had `-preview` and 404'd.
-- Running outside the-edit dir breaks imports — always `cd /Users/siddarthnyati/the-edit` first.
-- Web search results count against input tokens (search results land in context). Constrain `max_uses` aggressively.
-- Sonnet 4.6 cache minimum is 2048 tokens. Editor's prefix is ~600 → won't cache. QA's is ~21K → caches well.
+Wire StyleMeUp Discover to consume the published issue through `EXPO_PUBLIC_THE_EDIT_API_URL`, keep local Vol. 18 fallback, and add a visible refresh/notification when a new Magazine issue is live.

@@ -1,10 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { anthropic } from '@ai-sdk/anthropic';
-import { generateObject } from 'ai';
 import { z } from 'zod';
 import { BRAND_PREAMBLE, designMd } from '../lib/context.js';
 import { recordCost, recordWebSearchCost, exceededWebSearchCap, getWebSearchCost } from '../lib/cost.js';
 import { archiveSources, findFreshSources } from '../lib/archive.js';
+import { generateObjectWithRepair } from '../lib/object-generation.js';
 import type { RunConfig, Source } from '../orchestrator/types.js';
 
 // ---------------------------------------------------------------------------
@@ -38,6 +38,22 @@ const anthropicClient = new Anthropic();
 
 const ARCHIVE_FRESH_DAYS = 7;
 const ARCHIVE_MIN_SOURCES = 15;
+const MIN_USABLE_SOURCES = 8;
+const TARGET_USABLE_SOURCES = 12;
+const MIN_PUBLISHERS = 2;
+
+type SearchRoundInput = {
+  model: string;
+  cachedSystem: string;
+  prompt: string;
+  maxUses: number;
+  label: string;
+};
+
+type SearchRoundOutput = {
+  narrative: string;
+  sources: Source[];
+};
 
 function deriveKeywords(input: ResearchInput): string[] {
   if (!input.runConfig.seedTrend) return [];
@@ -101,6 +117,71 @@ async function tryArchive(input: ResearchInput): Promise<{ narrative: string; so
   return { narrative, sources };
 }
 
+async function runSearchRound(input: SearchRoundInput): Promise<SearchRoundOutput> {
+  const stream = anthropicClient.messages.stream({
+    model: input.model,
+    max_tokens: 2600,
+    system: [
+      {
+        type: 'text',
+        text: input.cachedSystem,
+        cache_control: { type: 'ephemeral' },
+      },
+    ],
+    tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: input.maxUses }],
+    messages: [{ role: 'user', content: input.prompt }],
+  });
+
+  stream.on('text', (delta) => process.stdout.write(delta));
+  const searchResponse = await stream.finalMessage();
+  process.stdout.write('\n');
+
+  const { narrative, sources } = extractResearch(searchResponse);
+  const queryCount = searchResponse.content.filter(
+    (b: Anthropic.Messages.ContentBlock) => b.type === 'server_tool_use',
+  ).length;
+
+  const cacheRead = searchResponse.usage.cache_read_input_tokens ?? 0;
+  const cacheWrite = searchResponse.usage.cache_creation_input_tokens ?? 0;
+  const uncachedInput = Math.max(0, searchResponse.usage.input_tokens - cacheRead - cacheWrite);
+
+  const tokenCost =
+    (uncachedInput * 0.000003) +
+    (cacheWrite * 0.000003 * 1.25) +
+    (cacheRead * 0.000003 * 0.1) +
+    (searchResponse.usage.output_tokens * 0.000015);
+  const searchFee = queryCount * 0.01;
+
+  recordCost(tokenCost, `${input.label}-tokens`);
+  recordWebSearchCost(searchFee);
+
+  console.log(
+    `[${input.label}] ~$${(tokenCost + searchFee).toFixed(4)} | ${queryCount} queries | ` +
+    `${sources.length} sources | ${searchResponse.usage.input_tokens}p ` +
+    `(uncached:${uncachedInput} | cache-read:${cacheRead} | cache-write:${cacheWrite}) + ` +
+    `${searchResponse.usage.output_tokens}c tokens (search-fee $${searchFee.toFixed(4)} | ` +
+    `cumulative web-search $${getWebSearchCost().toFixed(4)})`,
+  );
+
+  return { narrative, sources };
+}
+
+function sourceQualityPassed(sources: Source[]): boolean {
+  return sources.length >= MIN_USABLE_SOURCES && publisherCount(sources) >= MIN_PUBLISHERS;
+}
+
+function publisherCount(sources: Source[]): number {
+  return new Set(sources.map((source) => source.publisher.trim().toLowerCase()).filter(Boolean)).size;
+}
+
+function mergeSources(first: Source[], second: Source[]): Source[] {
+  const byUrl = new Map<string, Source>();
+  for (const source of [...first, ...second]) {
+    byUrl.set(source.url, source);
+  }
+  return [...byUrl.values()];
+}
+
 export async function runResearch(input: ResearchInput): Promise<ResearchOutput> {
   // ── Archive check — skip web search entirely when archive is fresh ───────
   const archived = await tryArchive(input);
@@ -116,14 +197,15 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
     `Prior issues to avoid reusing: ${input.priorIssueSlugs.join(', ') || 'none'}`,
     '',
     'Use web search to find evidence for exactly 3 fashion trends that are returning',
-    'from a prior era. Run no more than 5 total searches — be efficient.',
-    'For each trend, give a short paragraph covering:',
+    'from a prior era. Run no more than 3 total searches — be efficient.',
+    'Return compact research notes only. Do NOT write the magazine article.',
+    'For each trend, give 4 terse bullets covering:',
     '- the era it returns from (decade or specific cultural moment)',
     '- 1-2 strong editorial or runway signals from the last 90 days',
     '- styling angle relevant to a foundation wardrobe (denim, tees, leather)',
     '- evidence gaps (what type of source you could not find)',
     '',
-    'Keep total output under 2000 words. Cite every factual claim.',
+    'Keep total output under 900 words. Cite every factual claim.',
     'No login-walled content, no unsourced influencer screenshots.',
   ].filter(Boolean).join('\n');
 
@@ -144,55 +226,16 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
     designMd().slice(0, 3000),
   ].join('\n');
 
-  const stream = anthropicClient.messages.stream({
+  const firstPass = await runSearchRound({
     model: searchModel,
-    max_tokens: 8000,
-    system: [
-      {
-        type: 'text',
-        text: cachedSystem,
-        cache_control: { type: 'ephemeral' },
-      },
-    ],
-    tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }],
-    messages: [{ role: 'user', content: searchPrompt }],
+    cachedSystem,
+    prompt: searchPrompt,
+    maxUses: 3,
+    label: 'research/search',
   });
 
-  stream.on('text', (delta) => process.stdout.write(delta));
-  const searchResponse = await stream.finalMessage();
-  process.stdout.write('\n');
-
-  // Pull narrative text + grounded sources from the response
-  const { narrative, sources } = extractResearch(searchResponse);
-
-  // Cost = input tokens + output tokens + web search query fee.
-  // Anthropic bills $0.01 per query (not per source). Count actual queries
-  // by looking for server_tool_use blocks in the response.
-  const queryCount = searchResponse.content.filter(
-    (b: Anthropic.Messages.ContentBlock) => b.type === 'server_tool_use',
-  ).length;
-
-  const cacheRead = searchResponse.usage.cache_read_input_tokens ?? 0;
-  const cacheWrite = searchResponse.usage.cache_creation_input_tokens ?? 0;
-  const uncachedInput = Math.max(0, searchResponse.usage.input_tokens - cacheRead - cacheWrite);
-
-  const tokenCost =
-    (uncachedInput * 0.000003) +
-    (cacheWrite * 0.000003 * 1.25) +
-    (cacheRead * 0.000003 * 0.1) +
-    (searchResponse.usage.output_tokens * 0.000015);
-  const searchFee = queryCount * 0.01;
-
-  recordCost(tokenCost, 'research/search-tokens');
-  recordWebSearchCost(searchFee);
-
-  console.log(
-    `[research/search] ~$${(tokenCost + searchFee).toFixed(4)} | ${queryCount} queries | ` +
-    `${sources.length} sources | ${searchResponse.usage.input_tokens}p ` +
-    `(uncached:${uncachedInput} | cache-read:${cacheRead} | cache-write:${cacheWrite}) + ` +
-    `${searchResponse.usage.output_tokens}c tokens (search-fee $${searchFee.toFixed(4)} | ` +
-    `cumulative web-search $${getWebSearchCost().toFixed(4)})`,
-  );
+  let narrative = firstPass.narrative;
+  let sources = firstPass.sources;
 
   // Salvage path: if web search cap was exceeded, do not run additional
   // search rounds — proceed with whatever sources we have. If we got zero
@@ -210,23 +253,62 @@ export async function runResearch(input: ResearchInput): Promise<ResearchOutput>
     );
   }
 
+  if (!sourceQualityPassed(sources) && !exceededWebSearchCap()) {
+    console.warn(
+      `[research/search] only ${sources.length}/${MIN_USABLE_SOURCES} usable sources ` +
+      `(${publisherCount(sources)} publishers). Running one last-chance search after backoff.`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 12_000));
+
+    const lastChance = await runSearchRound({
+      model: searchModel,
+      cachedSystem,
+      prompt: [
+        `Date range: ${input.runConfig.dateRange}`,
+        `Audience tracks: ${input.runConfig.audienceTracks.join(', ')}`,
+        input.runConfig.seedTrend ? `Seed trend hint: ${input.runConfig.seedTrend}` : '',
+        '',
+        `The first pass found ${sources.length} usable sources across ${publisherCount(sources)} publishers.`,
+        `Run exactly 1 targeted search to improve source quality toward ${TARGET_USABLE_SOURCES} usable sources.`,
+        'Prioritize distinct publishers, runway/editorial confirmation, and evidence for the strongest returning trend candidates.',
+        'Return at most 350 words of concise notes with citations. No login-walled content.',
+      ].filter(Boolean).join('\n'),
+      maxUses: 1,
+      label: 'research/last-chance-search',
+    });
+
+    narrative = [narrative, '\n\n## Last chance source pass\n', lastChance.narrative].join('\n');
+    sources = mergeSources(sources, lastChance.sources);
+  }
+
   // Persist new sources into the archive for future runs to reuse.
   // Use the seed trend (or a placeholder) as the keyword tag.
   const trendKeywords = deriveKeywords(input);
-  if (trendKeywords.length > 0 && sources.length > 0) {
+  if (sources.length > 0) {
     const { inserted, updated } = await archiveSources({
       sources,
-      trendKeywords,
+      trendKeywords: trendKeywords.length > 0 ? trendKeywords : ['weekly', 'magazine'],
       runId: input.runConfig.runId,
     });
     console.log(`[research/archive] saved ${inserted} new + ${updated} refreshed sources to archive`);
+  }
+
+  if (!sourceQualityPassed(sources)) {
+    throw new Error(
+      `blocked_needs_sources: research gathered ${sources.length}/${MIN_USABLE_SOURCES} usable sources ` +
+      `across ${publisherCount(sources)}/${MIN_PUBLISHERS} publishers after last-chance search. ` +
+      'Run blocked before rank/edit so weak research does not become draft copy.',
+    );
   }
 
   // ── Stage 2: structure the narrative into typed candidates ────────────────
   // Wait briefly to avoid stacking against the per-minute rate limit. The
   // search call may have spent 200K+ input tokens behind the scenes (web
   // search results count against the same window).
-  await new Promise((resolve) => setTimeout(resolve, 25_000));
+  const stageDelayMs = process.env['VERCEL'] ? 0 : 25_000;
+  if (stageDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, stageDelayMs));
+  }
 
   return await structureNarrative(narrative, sources);
 }
@@ -239,7 +321,8 @@ async function structureNarrative(narrative: string, sources: Source[]): Promise
   const trimmed = narrative.length > 8000 ? narrative.slice(0, 8000) + '\n[truncated]' : narrative;
 
   const structureModel = process.env['MAGAZINE_RESEARCH_MODEL'] ?? 'claude-sonnet-4-6';
-  const { object, usage } = await generateObject({
+  const { object, usage } = await generateObjectWithRepair({
+    repairLabel: 'research/structure',
     model: anthropic(structureModel),
     schema: StructuredResearchSchema,
     prompt: [

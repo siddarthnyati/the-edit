@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+import { FALLBACK_AGENTS_MD, FALLBACK_DESIGN_MD } from './fallback-context.js';
 
 // Loads brand and engineering rules from the styleMeUp repo.
 // In production, embed the relevant sections as static strings to benefit
@@ -7,11 +8,11 @@ import { resolve } from 'path';
 
 const STYLEMEUP_REPO = process.env['STYLEMEUP_REPO_PATH'] ?? '../styleMeUp';
 
-function load(relativePath: string): string {
+function load(relativePath: string, fallback: string): string {
   try {
     return readFileSync(resolve(STYLEMEUP_REPO, relativePath), 'utf-8');
   } catch {
-    throw new Error(`Could not load context file: ${relativePath}. Set STYLEMEUP_REPO_PATH.`);
+    return fallback;
   }
 }
 
@@ -19,12 +20,12 @@ let _designMd: string | null = null;
 let _agentsMd: string | null = null;
 
 export function designMd(): string {
-  _designMd ??= load('DESIGN.md');
+  _designMd ??= load('DESIGN.md', FALLBACK_DESIGN_MD);
   return _designMd;
 }
 
 export function agentsMd(): string {
-  _agentsMd ??= load('AGENTS.md');
+  _agentsMd ??= load('AGENTS.md', FALLBACK_AGENTS_MD);
   return _agentsMd;
 }
 

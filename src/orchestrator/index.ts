@@ -7,7 +7,8 @@ import { runRank } from '../executors/rank.js';
 import { runEdit } from '../executors/edit.js';
 import { runPrompt } from '../executors/prompt.js';
 import { runQA } from '../executors/qa.js';
-import type { OrchestrationState, RunConfig, MagazineIssueManifest } from './types.js';
+import { summarizeError } from '../lib/object-generation.js';
+import type { OrchestrationState, RunConfig } from './types.js';
 
 // ---------------------------------------------------------------------------
 // Entry point: `npm run draft`
@@ -141,26 +142,30 @@ async function runStep<T>(
     state.completedSteps.push(step);
     return output;
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = summarizeError(err);
     const stepCost = getStepCost(step);
     state.totalCostUsd = getTotalCost();
+    const blocked = error.toLowerCase().includes('blocked_');
 
     await persistStep({
       runId: state.config.runId,
       step,
-      status: 'failed',
+      status: blocked ? 'blocked' : 'failed',
       input: null,
       output: null,
       sources: [],
       estimatedCostUsd: stepCost,
       error,
+      recoverable: true,
+      ...(blocked ? { blockedReason: error } : {}),
+      rawErrorSummary: error,
       createdAt,
       completedAt: new Date().toISOString(),
     });
 
     console.error(`[${step}] failed: ${error}`);
     console.error(`[orchestrator] partial cost on ${step}: $${stepCost.toFixed(4)} | total so far: $${state.totalCostUsd.toFixed(4)}`);
-    throw err;
+    throw new Error(error);
   }
 }
 
@@ -225,6 +230,7 @@ function nextVolume(): number {
 }
 
 main().catch((err) => {
-  console.error('[orchestrator] fatal:', err);
+  const message = err instanceof Error ? err.message : String(err);
+  console.error('[orchestrator] fatal:', message);
   process.exit(1);
 });

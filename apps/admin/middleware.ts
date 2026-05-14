@@ -35,8 +35,8 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Run on every page + API route; skip Next internals and static assets
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  // Run on admin pages + private APIs; skip the app-facing public issue feed.
+  matcher: ['/((?!api/issues|\\.well-known/workflow|_next/static|_next/image|favicon.ico).*)'],
 };
 
 function decodeBasicAuth(encoded: string): string | null {
