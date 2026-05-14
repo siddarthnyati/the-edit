@@ -6,3 +6,4 @@ dist/
 /runs/
 .vercel
 supabase/.temp/
+basics-output/
