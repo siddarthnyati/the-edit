@@ -2,95 +2,254 @@ import '../lib/env.js';
 import { GoogleGenAI } from '@google/genai';
 import { mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { createClient } from '@supabase/supabase-js';
 
-// Wardrobe-basics image generator.
-// Different from the Magazine pipeline: these are SSENSE-style product
-// shots of staples, not editorial trend imagery. Same Gemini API, but
-// a totally different prompt template optimized for product fidelity
-// not editorial flair.
+// Wardrobe basics generator — gender-split catalogs.
+//
+// Two-tier storage:
+//   - Every generated image is uploaded ("dumped") to Supabase Storage
+//     and indexed in wardrobe_basics with is_chosen=false. We paid for
+//     it; we keep it.
+//   - Curating chosen rows happens via the admin UI or a SQL UPDATE.
 //
 // Usage:
-//   npm run basics                          # generate the 5-item smoke test
-//   npm run basics -- --item white-tee      # one specific item
-//   npm run basics -- --all                 # generate everything in the catalog
-//
-// Outputs land in ./basics-output/ for local inspection. Once we're happy,
-// upload to Supabase Storage under magazine-assets/basics/{slug}.png.
+//   npm run basics                       # men + women, hybrid Pro/Flash
+//   npm run basics -- --gender men       # men only
+//   npm run basics -- --gender women     # women only
+//   npm run basics -- --local-only       # skip Supabase upload (test mode)
+//   npm run basics -- --flash            # all Flash (cheaper, lower quality)
 
 const apiKey = process.env['GEMINI_API_KEY'];
 if (!apiKey) throw new Error('GEMINI_API_KEY required');
 const ai = new GoogleGenAI({ apiKey });
 
-// Use Nano Banana Pro for higher fidelity on product shots. Cost is
-// ~$0.10/image vs $0.039 for Flash, but quality difference is huge.
-const MODEL = 'gemini-3-pro-image-preview';
+const supabaseUrl = process.env['SUPABASE_URL']!;
+const supabaseKey = process.env['SUPABASE_SERVICE_ROLE_KEY']!;
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+const args = process.argv.slice(2);
+const forceFlash = args.includes('--flash');
+const localOnly = args.includes('--local-only');
+const genderArg = args[args.indexOf('--gender') + 1] as 'men' | 'women' | undefined;
+
+const PRO_MODEL = 'gemini-3-pro-image-preview';
+const FLASH_MODEL = 'gemini-2.5-flash-image';
+const PRO_COST = 0.10;
+const FLASH_COST = 0.039;
+
+type Tier = 'pro' | 'flash';
 
 type BasicItem = {
   slug: string;
-  category: 'tee' | 'jean' | 'shoe' | 'boot' | 'jacket' | 'accessory';
+  category: 'tee' | 'jean' | 'shoe' | 'boot' | 'jacket' | 'accessory' | 'dress' | 'skirt' | 'trouser' | 'sweater' | 'coat';
+  silhouetteTag: string;
   name: string;
-  // The garment description — fabric, weight, cut, color, hardware.
-  // Write like an SSENSE product page would, not like a fashion editorial.
   garment: string;
-  // Per-category photography spec. Different garments need different
-  // photo conventions to look real.
   photography: string;
+  tier: Tier; // hero items get Pro, everything else Flash
 };
 
-// Photography templates by category — derived from how SSENSE / Mr Porter
-// / Acne Studios actually shoot each kind of product. The big insight:
-// "garment on void" is a category-specific photo style, not a generic one.
-const PHOTOGRAPHY_BY_CATEGORY: Record<BasicItem['category'], string> = {
-  tee: 'Front-facing on an invisible mannequin. Shoulders square, slight drape under chest. Subtle ground shadow. 4:5 portrait. Clean white seamless studio backdrop, soft three-point lighting from upper left. SSENSE / Mr Porter product photography style — hyperrealistic, no model, no human, no hands.',
-  jean: 'Front view, garment laid against a flat vertical surface OR styled on an invisible lower mannequin showing the natural drape. Both legs visible, full length, hem at frame bottom. Soft ground shadow. Pockets, stitching, and waistband visibly detailed. Clean light grey seamless studio backdrop, soft directional lighting from upper right. SSENSE product photography style.',
-  shoe: 'Single shoe, lateral side profile view (the editorial standard for footwear). Photographed on a clean cream seamless ground plane with soft contact shadow. Three-quarter angle slightly visible. Acne Studios / Mr Porter shoe-photography style. Hyperrealistic. Hardware (eyelets, laces, soles) clearly defined.',
-  boot: 'Single boot, lateral side profile view. Pull tab visible. Photographed on a clean cream seamless ground plane with soft contact shadow at the sole. Acne Studios footwear product photography style. Hyperrealistic detail on the leather grain, stitching, and sole construction.',
-  jacket: 'Front view on an invisible mannequin with shoulders defined, lapels or collar shown in 3D depth. Subtle ground shadow. Buttons or hardware visible. Clean white seamless studio backdrop, three-point lighting. Mr Porter / SSENSE outerwear photography style.',
-  accessory: 'Single object, top-down OR three-quarter view depending on form. Clean cream seamless backdrop, soft contact shadow. Detail on hardware, stitching, material grain. Acne Studios accessory photography style.',
+// Category-specific photography conventions. SSENSE / Mr Porter / Toteme /
+// Acne Studios reference style depending on the category.
+const PHOTOGRAPHY: Record<BasicItem['category'], string> = {
+  tee: 'Front-facing on an invisible mannequin. Shoulders square, slight drape under chest. Subtle ground shadow. Clean white seamless studio backdrop, soft three-point lighting from upper left. SSENSE / Mr Porter product photography style — hyperrealistic, no model, no human, no hands.',
+  jean: 'Front view, garment on an invisible lower mannequin showing natural drape. Both legs visible, full length, hem at frame bottom. Soft ground shadow. Pockets, stitching, waistband visibly detailed. Clean light grey seamless studio backdrop, soft directional lighting. SSENSE product photography style.',
+  shoe: 'Single shoe, lateral side profile view (footwear editorial standard). Photographed on a clean cream seamless ground plane with soft contact shadow. Acne Studios / Mr Porter shoe-photography style. Hardware (eyelets, laces, soles) clearly defined.',
+  boot: 'Single boot, lateral side profile view. Pull tab visible. Photographed on a clean cream seamless ground plane with soft contact shadow at the sole. Acne Studios footwear product photography style.',
+  jacket: 'Front view on an invisible mannequin with shoulders defined, lapels or collar shown in 3D depth. Buttons or hardware visible. Clean white seamless studio backdrop, three-point lighting. Mr Porter / SSENSE outerwear photography style.',
+  accessory: 'Single object, three-quarter view. Clean cream seamless backdrop, soft contact shadow. Detail on hardware, stitching, material grain. Acne Studios accessory photography style.',
+  dress: 'Front view on an invisible mannequin or hanger, full length, garment fully visible from straps to hem. Natural drape, fabric movement subtle. Clean white seamless studio backdrop, soft directional lighting. Net-a-Porter / Toteme product photography style.',
+  skirt: 'Front view on an invisible lower mannequin. Full length from waistband to hem visible. Natural drape, no styling. Clean light grey seamless backdrop, soft three-point lighting. SSENSE / Toteme product photography style.',
+  trouser: 'Front view on an invisible lower mannequin. Both legs visible, full length, hem at frame bottom. Waistband detail visible. Soft ground shadow. Clean light grey seamless backdrop. SSENSE / The Frankie Shop product photography style.',
+  sweater: 'Front view on an invisible mannequin with shoulders defined. Visible knit texture, ribbed cuffs and hem. Clean white seamless backdrop, three-point lighting. The Row / Acne Studios knitwear photography style.',
+  coat: 'Front view on an invisible mannequin, full length to mid-calf or longer. Lapels and collar shown in depth. Belt or buttons visible if present. Clean light grey seamless backdrop, soft directional lighting. Toteme / Mr Porter outerwear photography style.',
 };
 
-// The catalog. Start tight — 5 items for the smoke test. Add more after
-// we verify quality.
-const CATALOG: BasicItem[] = [
+// ── Men's catalog (10 items, hybrid) ─────────────────────────────────────
+const MEN_CATALOG: BasicItem[] = [
   {
-    slug: 'white-tee',
+    slug: 'white-crew-tee',
     category: 'tee',
-    name: 'White Tee',
-    garment:
-      'Classic crew-neck t-shirt in heavyweight (200gsm) cotton jersey, optical white. Mid-weight knit with subtle texture, ribbed crew collar, set-in sleeves at the shoulder line, straight hem. Unbranded, no logo, no graphics. Slightly relaxed fit through the body. Sleeves end mid-bicep.',
-    photography: PHOTOGRAPHY_BY_CATEGORY.tee,
+    silhouetteTag: 'boxy-relaxed',
+    name: 'White Crew Tee',
+    tier: 'pro',
+    garment: 'Heavyweight 200gsm cotton jersey, optical white. Crew neck with ribbed collar, set-in sleeves at shoulder, straight hem. Boxy relaxed fit, sleeves end mid-bicep. Unbranded, no logo.',
+    photography: PHOTOGRAPHY.tee,
   },
   {
-    slug: 'black-tee',
+    slug: 'black-crew-tee',
     category: 'tee',
-    name: 'Black Tee',
-    garment:
-      'Same as the white tee in jet black — heavyweight (200gsm) cotton jersey, crew neck, ribbed collar, set-in sleeves, straight hem. Unbranded, no logo. Slightly relaxed fit. The black should read true black, not faded grey-black.',
-    photography: PHOTOGRAPHY_BY_CATEGORY.tee,
+    silhouetteTag: 'boxy-relaxed',
+    name: 'Black Crew Tee',
+    tier: 'flash',
+    garment: 'Same as white crew tee but in jet black — heavyweight cotton jersey, ribbed crew collar, set-in sleeves, boxy fit. True black, not faded.',
+    photography: PHOTOGRAPHY.tee,
   },
   {
     slug: 'raw-indigo-jean',
     category: 'jean',
+    silhouetteTag: 'straight-mid-rise',
     name: 'Raw Indigo Jean',
-    garment:
-      'Five-pocket straight-leg jean in 14oz raw selvedge denim, dark indigo. Mid-rise waistband, copper rivets at stress points, button fly, classic arcuate stitching on the back pockets (kept minimal, no large branded stitching). Hem unfinished and slightly slubbed. Standard 32-inch inseam.',
-    photography: PHOTOGRAPHY_BY_CATEGORY.jean,
+    tier: 'pro',
+    garment: '14oz raw selvedge denim in dark indigo, five-pocket straight-leg cut. Mid-rise waistband, copper rivets at stress points, button fly, classic arcuate stitching. Hem unfinished, slightly slubbed. 32-inch inseam.',
+    photography: PHOTOGRAPHY.jean,
+  },
+  {
+    slug: 'black-washed-jean',
+    category: 'jean',
+    silhouetteTag: 'straight-mid-rise',
+    name: 'Black Washed Jean',
+    tier: 'flash',
+    garment: 'Straight-leg five-pocket jean in washed black denim with subtle fade at the thighs. Mid-rise, button fly, tonal stitching. Slightly relaxed through the seat, straight to the hem.',
+    photography: PHOTOGRAPHY.jean,
   },
   {
     slug: 'white-low-sneaker',
     category: 'shoe',
+    silhouetteTag: 'minimal-leather',
     name: 'White Low Sneaker',
-    garment:
-      'Minimal low-top leather sneaker in clean optical white. Full-grain calfskin upper, six-eyelet lacing in flat white laces, rubber cup sole in cream, tonal stitching, no visible branding. Slim silhouette, square-ish toe. Common Projects / Maison Margiela aesthetic — quiet, considered.',
-    photography: PHOTOGRAPHY_BY_CATEGORY.shoe,
+    tier: 'pro',
+    garment: 'Minimal low-top leather sneaker, optical white full-grain calfskin upper, six-eyelet lacing, flat white laces, cream rubber cup sole, tonal stitching, no visible branding. Slim silhouette, square-ish toe. Common Projects aesthetic.',
+    photography: PHOTOGRAPHY.shoe,
   },
   {
-    slug: 'black-chelsea-boot',
+    slug: 'black-chelsea-boot-men',
     category: 'boot',
+    silhouetteTag: 'classic-chelsea',
     name: 'Black Chelsea Boot',
-    garment:
-      'Classic chelsea boot in polished black calfskin leather. Elasticated side panels, leather pull tab at heel, almond toe, leather sole with subtle stacked heel. No visible branding. Saint Laurent / Common Projects silhouette — sharp, minimal.',
-    photography: PHOTOGRAPHY_BY_CATEGORY.boot,
+    tier: 'pro',
+    garment: 'Classic chelsea boot in polished black calfskin leather. Elasticated side panels, leather pull tab, almond toe, leather sole with subtle stacked heel. No branding. Saint Laurent silhouette.',
+    photography: PHOTOGRAPHY.boot,
+  },
+  {
+    slug: 'navy-wool-blazer-men',
+    category: 'jacket',
+    silhouetteTag: 'unstructured-blazer',
+    name: 'Navy Wool Blazer',
+    tier: 'flash',
+    garment: 'Single-breasted unstructured blazer in navy wool flannel. Notched lapels, two-button front, three flap pockets, no padding, soft shoulder. Slightly relaxed fit. Boglioli aesthetic.',
+    photography: PHOTOGRAPHY.jacket,
+  },
+  {
+    slug: 'denim-trucker-jacket',
+    category: 'jacket',
+    silhouetteTag: 'workwear',
+    name: 'Denim Trucker',
+    tier: 'flash',
+    garment: '14oz indigo selvedge denim trucker jacket. Classic Type III silhouette, button front, two chest pockets with flaps, copper rivets, slightly cropped hem. Unbranded.',
+    photography: PHOTOGRAPHY.jacket,
+  },
+  {
+    slug: 'grey-crewneck-sweatshirt',
+    category: 'sweater',
+    silhouetteTag: 'crewneck',
+    name: 'Grey Crewneck',
+    tier: 'flash',
+    garment: 'Heavyweight 14oz brushed-back cotton fleece, heather grey. Crew neck with ribbed collar, raglan or set-in sleeves, ribbed cuffs and hem. Slightly boxy fit. Reigning Champ aesthetic.',
+    photography: PHOTOGRAPHY.sweater,
+  },
+  {
+    slug: 'black-leather-belt-men',
+    category: 'accessory',
+    silhouetteTag: 'classic-belt',
+    name: 'Black Leather Belt',
+    tier: 'flash',
+    garment: 'Single black calfskin leather belt, 1.25-inch wide. Brushed silver buckle, single keeper loop, five holes. Polished but not glossy. Anderson\'s / Saint Laurent aesthetic.',
+    photography: PHOTOGRAPHY.accessory,
+  },
+];
+
+// ── Women's catalog (10 items, hybrid) ───────────────────────────────────
+const WOMEN_CATALOG: BasicItem[] = [
+  {
+    slug: 'white-fitted-tee',
+    category: 'tee',
+    silhouetteTag: 'fitted',
+    name: 'White Fitted Tee',
+    tier: 'pro',
+    garment: 'Slim-fit crew-neck t-shirt in midweight 160gsm Pima cotton jersey, optical white. Slightly tapered through waist, fitted sleeves ending upper bicep, ribbed crew collar. The Row / Toteme aesthetic — quiet, refined.',
+    photography: PHOTOGRAPHY.tee,
+  },
+  {
+    slug: 'black-fitted-tee',
+    category: 'tee',
+    silhouetteTag: 'fitted',
+    name: 'Black Fitted Tee',
+    tier: 'flash',
+    garment: 'Same as white fitted tee in jet black — slim-fit Pima cotton jersey, tapered waist, ribbed crew collar. True black.',
+    photography: PHOTOGRAPHY.tee,
+  },
+  {
+    slug: 'dark-wash-straight-jean-women',
+    category: 'jean',
+    silhouetteTag: 'high-rise-straight',
+    name: 'Dark Wash Straight Jean',
+    tier: 'pro',
+    garment: 'High-rise straight-leg jean in clean dark indigo denim, 12oz weight. Five-pocket construction, button fly, slight stretch for fit. Sits at natural waist, falls straight from hip to hem. Khaite / Toteme silhouette.',
+    photography: PHOTOGRAPHY.jean,
+  },
+  {
+    slug: 'wide-leg-trouser-black-women',
+    category: 'trouser',
+    silhouetteTag: 'wide-leg-tailored',
+    name: 'Wide-Leg Trouser',
+    tier: 'flash',
+    garment: 'High-waisted wide-leg trouser in matte black wool blend, full length to floor. Pleated front, clean side seam, tonal button at waistband, generous leg with natural drape, hem grazing ground. The Frankie Shop silhouette.',
+    photography: PHOTOGRAPHY.trouser,
+  },
+  {
+    slug: 'white-leather-sneaker-women',
+    category: 'shoe',
+    silhouetteTag: 'minimal-leather',
+    name: 'White Leather Sneaker',
+    tier: 'flash',
+    garment: 'Slim low-top leather sneaker, optical white full-grain calfskin. Five-eyelet lacing in flat laces, slim cream rubber sole, tonal stitching, no branding. Slightly more refined and slimmer than men\'s version. Common Projects womens aesthetic.',
+    photography: PHOTOGRAPHY.shoe,
+  },
+  {
+    slug: 'black-ballet-flat',
+    category: 'shoe',
+    silhouetteTag: 'ballet-flat',
+    name: 'Black Ballet Flat',
+    tier: 'flash',
+    garment: 'Classic ballet flat in black calfskin leather. Rounded toe, slim leather sole, low-profile, no embellishment. Visible stitching at the toe seam. Repetto / Margiela Tabi-adjacent simplicity, not Tabi-toed.',
+    photography: PHOTOGRAPHY.shoe,
+  },
+  {
+    slug: 'black-slip-dress',
+    category: 'dress',
+    silhouetteTag: 'midi-slip',
+    name: 'Black Slip Dress',
+    tier: 'pro',
+    garment: 'Bias-cut slip dress in heavyweight silk satin, deep black. Spaghetti straps, V-neckline, midi length grazing mid-calf, natural fabric pooling at hem. No embellishment, no hardware. Toteme aesthetic — fluid drape.',
+    photography: PHOTOGRAPHY.dress,
+  },
+  {
+    slug: 'midi-skirt-charcoal',
+    category: 'skirt',
+    silhouetteTag: 'midi-a-line',
+    name: 'Charcoal Midi Skirt',
+    tier: 'flash',
+    garment: 'A-line midi skirt in heavyweight wool flannel, charcoal grey. High waistband with clean side zip, full length to mid-calf, subtle flare from waist to hem. Toteme / Lemaire silhouette.',
+    photography: PHOTOGRAPHY.skirt,
+  },
+  {
+    slug: 'black-fitted-blazer-women',
+    category: 'jacket',
+    silhouetteTag: 'structured-blazer',
+    name: 'Black Fitted Blazer',
+    tier: 'pro',
+    garment: 'Single-breasted blazer in black wool gabardine. Slightly fitted through waist with subtle suppression, notched lapels, two-button front, two flap pockets. Defined shoulder, clean tailoring. Saint Laurent / Toteme aesthetic.',
+    photography: PHOTOGRAPHY.jacket,
+  },
+  {
+    slug: 'camel-trench-coat',
+    category: 'coat',
+    silhouetteTag: 'classic-trench',
+    name: 'Camel Trench Coat',
+    tier: 'flash',
+    garment: 'Classic double-breasted trench coat in warm camel cotton gabardine. Notched lapels, storm flap, gun flap, belted waist with leather buckle, full length to mid-calf, vented back. Burberry-inspired silhouette but unbranded.',
+    photography: PHOTOGRAPHY.coat,
   },
 ];
 
@@ -100,7 +259,6 @@ const NEGATIVE = [
   'NEVER include: cluttered backgrounds, props, additional garments, decorative elements',
   'NEVER include: flat-lay from-above arrangements, top-down compositions',
   'NEVER include: oversaturated colors, HDR effects, blur, lens flare',
-  'NEVER include: incorrect anatomical drape (jeans must hang naturally, shoes must sit on the ground plane)',
 ].join('. ');
 
 function buildPrompt(item: BasicItem): string {
@@ -113,84 +271,138 @@ function buildPrompt(item: BasicItem): string {
     ``,
     NEGATIVE,
     ``,
-    `Output: a single still product image suitable for a luxury e-commerce site (SSENSE, Mr Porter, Acne Studios). Resolution and detail comparable to a real product photograph.`,
+    `Output: a single still product image suitable for a luxury e-commerce site (SSENSE, Mr Porter, Toteme). Resolution and detail comparable to a real product photograph.`,
   ].join('\n');
 }
 
-async function generateBasic(item: BasicItem, outputDir: string): Promise<{ ok: boolean; bytes?: number; cost?: number; error?: string }> {
-  const prompt = buildPrompt(item);
-  const t0 = Date.now();
+async function generateWithFallback(item: BasicItem): Promise<{ bytes: Buffer; model: string; cost: number; dt: number } | null> {
+  const requested: Tier = forceFlash ? 'flash' : item.tier;
+  // Try requested tier first; on 503/overload, fall back to Flash
+  const order: Tier[] = requested === 'pro' ? ['pro', 'flash'] : ['flash'];
 
-  try {
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: prompt,
-    });
-
-    const parts = response.candidates?.[0]?.content?.parts ?? [];
-    const imagePart = parts.find((p) => p.inlineData?.data);
-    if (!imagePart?.inlineData?.data) {
-      return { ok: false, error: 'no image data returned' };
+  for (const tier of order) {
+    const model = tier === 'pro' ? PRO_MODEL : FLASH_MODEL;
+    const cost = tier === 'pro' ? PRO_COST : FLASH_COST;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const t0 = Date.now();
+      try {
+        const response = await ai.models.generateContent({ model, contents: buildPrompt(item) });
+        const part = response.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
+        if (part?.inlineData?.data) {
+          return { bytes: Buffer.from(part.inlineData.data, 'base64'), model, cost, dt: Date.now() - t0 };
+        }
+        // No image data — retry once
+        await new Promise((r) => setTimeout(r, 2000));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const overloaded = msg.includes('503') || msg.includes('UNAVAILABLE') || msg.includes('high demand');
+        if (overloaded && attempt < 2) {
+          const wait = Math.pow(2, attempt) * 3000;
+          console.warn(`  ↻ ${item.slug} ${tier} overloaded, retrying in ${wait}ms (attempt ${attempt + 1}/3)`);
+          await new Promise((r) => setTimeout(r, wait));
+          continue;
+        }
+        if (overloaded && tier === 'pro') {
+          console.warn(`  ↳ ${item.slug} falling back from pro → flash`);
+          break; // exit inner loop, try next tier
+        }
+        throw e;
+      }
     }
-
-    const bytes = Buffer.from(imagePart.inlineData.data, 'base64');
-    const path = join(outputDir, `${item.slug}.png`);
-    writeFileSync(path, bytes);
-
-    const dt = Date.now() - t0;
-    console.log(`  ✓ ${item.slug.padEnd(24)} ${bytes.length.toString().padStart(7)}b  ${dt}ms  → ${path}`);
-
-    return { ok: true, bytes: bytes.length };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`  ✗ ${item.slug}: ${msg.slice(0, 100)}`);
-    return { ok: false, error: msg };
   }
+  return null;
 }
 
-async function main() {
-  const args = process.argv.slice(2);
-  const itemArg = args.find((a, i) => args[i - 1] === '--item');
-  const all = args.includes('--all');
+async function generateAndUpload(item: BasicItem, gender: 'men' | 'women', outputDir: string) {
+  const result = await generateWithFallback(item);
+  if (!result) return { ok: false, error: 'all tiers exhausted', costUsd: 0 };
+  const { bytes, model, cost: costUsd, dt } = result;
+  const tier: Tier = model === PRO_MODEL ? 'pro' : 'flash';
 
-  let items: BasicItem[];
-  if (itemArg) {
-    const found = CATALOG.find((c) => c.slug === itemArg);
-    if (!found) {
-      console.error(`Unknown item: ${itemArg}. Available:`);
-      CATALOG.forEach((c) => console.error(`  - ${c.slug}`));
-      process.exit(1);
-    }
-    items = [found];
-  } else if (all) {
-    items = CATALOG;
-  } else {
-    // Default: the 5-item smoke test
-    items = CATALOG;
+  // Always write local copy
+  const localPath = join(outputDir, `${gender}-${item.slug}.png`);
+  writeFileSync(localPath, bytes);
+
+  if (localOnly) {
+    console.log(`  ✓ ${gender}/${item.slug.padEnd(28)} ${tier} ${bytes.length.toString().padStart(7)}b ${dt}ms → ${localPath} (local-only)`);
+    return { ok: true, costUsd, bytes: bytes.length };
   }
 
-  const outputDir = './basics-output';
+  // Upload to Supabase Storage
+  const storagePath = `${gender}/${item.slug}.png`;
+  const { error: uploadError } = await supabase.storage
+    .from('wardrobe-basics')
+    .upload(storagePath, bytes, { contentType: 'image/png', upsert: true });
+
+  if (uploadError) {
+    console.warn(`  ✗ ${gender}/${item.slug} upload failed: ${uploadError.message}`);
+    return { ok: false, error: uploadError.message, costUsd };
+  }
+
+  // Index in wardrobe_basics
+  const { error: insertError } = await supabase.from('wardrobe_basics').upsert({
+    gender,
+    category: item.category,
+    silhouette_tag: item.silhouetteTag,
+    slug: item.slug,
+    name: item.name,
+    storage_path: storagePath,
+    generation_model: model,
+    prompt: buildPrompt(item),
+    cost_usd: costUsd,
+    variant_index: 0,
+  }, { onConflict: 'gender,slug,variant_index' });
+
+  if (insertError) {
+    console.warn(`  ✗ ${gender}/${item.slug} insert failed: ${insertError.message}`);
+    return { ok: false, error: insertError.message, costUsd };
+  }
+
+  console.log(`  ✓ ${gender}/${item.slug.padEnd(28)} ${tier} ${bytes.length.toString().padStart(7)}b ${dt}ms → ${storagePath}`);
+  return { ok: true, costUsd, bytes: bytes.length };
+}
+
+async function runCatalog(gender: 'men' | 'women', items: BasicItem[]) {
+  const outputDir = `./basics-output/${gender}`;
   mkdirSync(outputDir, { recursive: true });
 
-  console.log(`[basics] generating ${items.length} item(s) with ${MODEL}`);
-  console.log(`[basics] output: ${outputDir}/`);
-  console.log();
+  console.log(`\n[basics] ${gender.toUpperCase()} catalog — ${items.length} items`);
+  console.log(`[basics] output: ${outputDir}/, supabase: ${localOnly ? 'SKIPPED' : 'wardrobe-basics bucket + wardrobe_basics table'}`);
 
+  let totalCost = 0;
   let succeeded = 0;
-  let failed = 0;
 
-  // Sequential, not parallel — respects free-tier rate limits (10 RPM)
   for (const item of items) {
-    const result = await generateBasic(item, outputDir);
+    const result = await generateAndUpload(item, gender, outputDir);
     if (result.ok) succeeded++;
-    else failed++;
-    // Small delay between calls to stay well under rate limits
+    totalCost += result.costUsd;
     await new Promise((r) => setTimeout(r, 1000));
   }
 
-  console.log();
-  console.log(`[basics] done — ${succeeded}/${items.length} succeeded${failed > 0 ? `, ${failed} failed` : ''}`);
-  console.log(`[basics] inspect with: open ${outputDir}`);
+  console.log(`[basics] ${gender}: ${succeeded}/${items.length} ok, $${totalCost.toFixed(4)}`);
+  return { succeeded, totalCost };
+}
+
+async function main() {
+  let catalogs: Array<{ gender: 'men' | 'women'; items: BasicItem[] }>;
+
+  if (genderArg === 'men') catalogs = [{ gender: 'men', items: MEN_CATALOG }];
+  else if (genderArg === 'women') catalogs = [{ gender: 'women', items: WOMEN_CATALOG }];
+  else catalogs = [{ gender: 'men', items: MEN_CATALOG }, { gender: 'women', items: WOMEN_CATALOG }];
+
+  let grandTotal = 0;
+  let grandSucceeded = 0;
+
+  for (const { gender, items } of catalogs) {
+    const { succeeded, totalCost } = await runCatalog(gender, items);
+    grandSucceeded += succeeded;
+    grandTotal += totalCost;
+  }
+
+  console.log(`\n[basics] DONE — ${grandSucceeded} images, $${grandTotal.toFixed(4)} total`);
+  if (!localOnly) {
+    console.log(`[basics] View in Supabase: select gender, category, slug, storage_path from wardrobe_basics order by gender, category;`);
+  }
 }
 
 main().catch((e) => {
