@@ -13,7 +13,8 @@
     "basics": "tsx src/scripts/basics.ts",
     "migrate:remote": "bash scripts/apply-remote-migrations.sh",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --ext .ts"
+    "lint": "eslint src --ext .ts",
+    "firstfit": "tsx src/scripts/firstFitHeroes.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",
