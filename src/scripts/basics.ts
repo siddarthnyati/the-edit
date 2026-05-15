@@ -157,6 +157,15 @@ const MEN_CATALOG: BasicItem[] = [
     garment: 'Single black calfskin leather belt, 1.25-inch wide. Brushed silver buckle, single keeper loop, five holes. Polished but not glossy. Anderson\'s / Saint Laurent aesthetic.',
     photography: PHOTOGRAPHY.accessory,
   },
+  {
+    slug: 'black-bomber-jacket-men',
+    category: 'jacket',
+    silhouetteTag: 'bomber',
+    name: 'Black Bomber Jacket',
+    tier: 'flash',
+    garment: 'Classic MA-1 bomber jacket in matte black nylon shell. Ribbed knit collar, cuffs, and hem in tonal black. Zip front, two slash pockets, single utility pocket on left sleeve. Slim relaxed fit, hits at the hip. Alpha Industries / unbranded silhouette.',
+    photography: PHOTOGRAPHY.jacket,
+  },
 ];
 
 // ── Women's catalog (10 items, hybrid) ───────────────────────────────────
@@ -250,6 +259,33 @@ const WOMEN_CATALOG: BasicItem[] = [
     tier: 'flash',
     garment: 'Classic double-breasted trench coat in warm camel cotton gabardine. Notched lapels, storm flap, gun flap, belted waist with leather buckle, full length to mid-calf, vented back. Burberry-inspired silhouette but unbranded.',
     photography: PHOTOGRAPHY.coat,
+  },
+  {
+    slug: 'black-bomber-jacket-women',
+    category: 'jacket',
+    silhouetteTag: 'bomber',
+    name: 'Black Bomber Jacket',
+    tier: 'flash',
+    garment: 'Slim-fit bomber jacket in matte black nylon shell, cropped at the hip. Ribbed knit collar, cuffs, and hem in tonal black. Zip front, slim through the waist, two slash pockets. Acne Studios / Saint Laurent women\'s silhouette.',
+    photography: PHOTOGRAPHY.jacket,
+  },
+  {
+    slug: 'black-chelsea-boot-women',
+    category: 'boot',
+    silhouetteTag: 'classic-chelsea',
+    name: 'Black Chelsea Boot',
+    tier: 'flash',
+    garment: 'Classic chelsea boot in polished black calfskin leather. Elasticated side panels, slim leather pull tab, almond toe, leather sole with subtle 1-inch stacked heel. Slightly slimmer last than the men\'s version. Margiela / Saint Laurent women\'s silhouette.',
+    photography: PHOTOGRAPHY.boot,
+  },
+  {
+    slug: 'black-leather-belt-women',
+    category: 'accessory',
+    silhouetteTag: 'classic-belt',
+    name: 'Black Leather Belt',
+    tier: 'flash',
+    garment: 'Slim 1-inch wide black calfskin leather belt. Brushed silver buckle, single keeper loop, polished edge. The Row / Khaite aesthetic — minimal, refined.',
+    photography: PHOTOGRAPHY.accessory,
   },
 ];
 
@@ -362,24 +398,45 @@ async function generateAndUpload(item: BasicItem, gender: 'men' | 'women', outpu
   return { ok: true, costUsd, bytes: bytes.length };
 }
 
+async function alreadyGenerated(gender: 'men' | 'women'): Promise<Set<string>> {
+  if (localOnly) return new Set();
+  const { data, error } = await supabase
+    .from('wardrobe_basics')
+    .select('slug')
+    .eq('gender', gender);
+  if (error) {
+    console.warn(`[basics] could not check existing rows: ${error.message}`);
+    return new Set();
+  }
+  return new Set((data ?? []).map((r) => r.slug as string));
+}
+
 async function runCatalog(gender: 'men' | 'women', items: BasicItem[]) {
   const outputDir = `./basics-output/${gender}`;
   mkdirSync(outputDir, { recursive: true });
 
-  console.log(`\n[basics] ${gender.toUpperCase()} catalog — ${items.length} items`);
+  // Skip items already in Supabase unless --force-regen is passed
+  const force = args.includes('--force-regen');
+  const existing = force ? new Set<string>() : await alreadyGenerated(gender);
+  const toRun = items.filter((item) => !existing.has(item.slug));
+  const skipped = items.length - toRun.length;
+
+  console.log(`\n[basics] ${gender.toUpperCase()} catalog — ${toRun.length} new${skipped > 0 ? ` (${skipped} already in Supabase, skipped — pass --force-regen to redo)` : ''}`);
+  if (toRun.length === 0) return { succeeded: 0, totalCost: 0 };
+
   console.log(`[basics] output: ${outputDir}/, supabase: ${localOnly ? 'SKIPPED' : 'wardrobe-basics bucket + wardrobe_basics table'}`);
 
   let totalCost = 0;
   let succeeded = 0;
 
-  for (const item of items) {
+  for (const item of toRun) {
     const result = await generateAndUpload(item, gender, outputDir);
     if (result.ok) succeeded++;
     totalCost += result.costUsd;
     await new Promise((r) => setTimeout(r, 1000));
   }
 
-  console.log(`[basics] ${gender}: ${succeeded}/${items.length} ok, $${totalCost.toFixed(4)}`);
+  console.log(`[basics] ${gender}: ${succeeded}/${toRun.length} ok, $${totalCost.toFixed(4)}`);
   return { succeeded, totalCost };
 }
 
