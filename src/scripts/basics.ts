@@ -31,6 +31,7 @@ const args = process.argv.slice(2);
 const forceFlash = args.includes('--flash');
 const localOnly = args.includes('--local-only');
 const genderArg = args[args.indexOf('--gender') + 1] as 'men' | 'women' | undefined;
+const slugArg = args.includes('--slug') ? args[args.indexOf('--slug') + 1] : undefined;
 
 const PRO_MODEL = 'gemini-3-pro-image-preview';
 const FLASH_MODEL = 'gemini-2.5-flash-image';
@@ -166,6 +167,115 @@ const MEN_CATALOG: BasicItem[] = [
     garment: 'Classic MA-1 bomber jacket in matte black nylon shell. Ribbed knit collar, cuffs, and hem in tonal black. Zip front, two slash pockets, single utility pocket on left sleeve. Slim relaxed fit, hits at the hip. Alpha Industries / unbranded silhouette.',
     photography: PHOTOGRAPHY.jacket,
   },
+  // ── Catalog expansion (2026-05-15) — filling visible gaps in starter pack ──
+  {
+    slug: 'heather-grey-tee-men',
+    category: 'tee',
+    silhouetteTag: 'boxy-relaxed',
+    name: 'Heather Grey Tee',
+    tier: 'flash',
+    garment: 'Heavyweight 200gsm cotton jersey, heather grey marl. Crew neck with ribbed collar, set-in sleeves at shoulder, straight hem. Boxy relaxed fit. Subtle melange texture in the knit. Unbranded.',
+    photography: PHOTOGRAPHY.tee,
+  },
+  {
+    slug: 'navy-crew-tee-men',
+    category: 'tee',
+    silhouetteTag: 'boxy-relaxed',
+    name: 'Navy Crew Tee',
+    tier: 'flash',
+    garment: 'Same as the white crew tee but in deep navy — heavyweight 200gsm cotton jersey, ribbed crew collar, set-in sleeves, boxy relaxed fit. Quiet, almost-black navy. Unbranded.',
+    photography: PHOTOGRAPHY.tee,
+  },
+  {
+    slug: 'olive-crew-tee-men',
+    category: 'tee',
+    silhouetteTag: 'boxy-relaxed',
+    name: 'Olive Crew Tee',
+    tier: 'flash',
+    garment: 'Heavyweight 200gsm cotton jersey, washed olive green — softened, not military-bright. Ribbed crew collar, set-in sleeves, boxy fit. Unbranded.',
+    photography: PHOTOGRAPHY.tee,
+  },
+  {
+    slug: 'washed-blue-jean-men',
+    category: 'jean',
+    silhouetteTag: 'straight-mid-rise',
+    name: 'Washed Blue Jean',
+    tier: 'flash',
+    garment: 'Straight-leg five-pocket jean in medium-wash blue denim with subtle whiskering at the hips and natural fade at the thighs. Mid-rise, button fly, copper rivets, tonal stitching. Slightly relaxed through the seat, straight to the hem.',
+    photography: PHOTOGRAPHY.jean,
+  },
+  {
+    slug: 'pale-denim-jean-men',
+    category: 'jean',
+    silhouetteTag: 'straight-mid-rise',
+    name: 'Pale Denim Jean',
+    tier: 'flash',
+    garment: 'Straight-leg five-pocket jean in pale stonewashed blue denim. Mid-rise, button fly, light fade across the front of the legs, no distressing. Soft hand, summer-weight. Unbranded.',
+    photography: PHOTOGRAPHY.jean,
+  },
+  {
+    slug: 'black-court-sneaker-men',
+    category: 'shoe',
+    silhouetteTag: 'minimal-leather',
+    name: 'Black Court Sneaker',
+    tier: 'pro',
+    garment: 'Minimal low-top leather sneaker, jet black full-grain calfskin upper, six-eyelet lacing, flat black laces, slim black rubber cup sole, tonal stitching, no visible branding. Same last as the white version. Common Projects black achilles aesthetic.',
+    photography: PHOTOGRAPHY.shoe,
+  },
+  {
+    slug: 'burgundy-loafer-men',
+    category: 'shoe',
+    silhouetteTag: 'classic-penny',
+    name: 'Burgundy Penny Loafer',
+    tier: 'pro',
+    garment: 'Classic penny loafer in burgundy oxblood polished calfskin leather. Apron toe, hand-stitched strap with single keeper slit, slim leather sole with low stacked heel, no tassel, no hardware. G.H. Bass Weejun silhouette but elevated. Quiet polish.',
+    photography: PHOTOGRAPHY.shoe,
+  },
+  {
+    slug: 'brown-leather-belt-men',
+    category: 'accessory',
+    silhouetteTag: 'classic-belt',
+    name: 'Brown Leather Belt',
+    tier: 'flash',
+    garment: 'Single warm-brown calfskin leather belt, 1.25-inch wide. Brushed antique-brass buckle, single keeper loop, five holes. Polished but not glossy, slight patina. Anderson\'s aesthetic.',
+    photography: PHOTOGRAPHY.accessory,
+  },
+  {
+    slug: 'navy-cotton-cap-men',
+    category: 'accessory',
+    silhouetteTag: 'six-panel-cap',
+    name: 'Navy Cotton Cap',
+    tier: 'flash',
+    garment: 'Six-panel cotton twill baseball cap in deep navy. Curved brim, low crown, brass adjustment buckle at the back, no logo or embroidery. Unstructured. Norse Projects aesthetic.',
+    photography: PHOTOGRAPHY.accessory,
+  },
+  {
+    slug: 'black-leather-jacket-men',
+    category: 'jacket',
+    silhouetteTag: 'moto',
+    name: 'Black Leather Jacket',
+    tier: 'pro',
+    garment: 'Slim-fit leather moto jacket in matte black calfskin leather, asymmetric front zip, notched lapel, snap collar, two zip side pockets, single zip chest pocket, zip cuffs. Clean shoulder, no studs, no quilting. Saint Laurent / Schott Perfecto silhouette but minimal.',
+    photography: PHOTOGRAPHY.jacket,
+  },
+  {
+    slug: 'olive-field-jacket-men',
+    category: 'jacket',
+    silhouetteTag: 'utility',
+    name: 'Olive Field Jacket',
+    tier: 'pro',
+    garment: 'M-65 style field jacket in dry olive-green cotton sateen. Four bellowed flap pockets at chest and hips, drawstring waist with internal cord, button-storm-flap front, banded collar. Loose fit. Engineered Garments aesthetic.',
+    photography: PHOTOGRAPHY.jacket,
+  },
+  {
+    slug: 'brown-chelsea-boot-men',
+    category: 'boot',
+    silhouetteTag: 'classic-chelsea',
+    name: 'Brown Chelsea Boot',
+    tier: 'pro',
+    garment: 'Classic chelsea boot in warm chestnut-brown polished calfskin leather. Elasticated side panels, brown leather pull tab, almond toe, leather sole with subtle stacked heel. R.M. Williams / Saint Laurent silhouette.',
+    photography: PHOTOGRAPHY.boot,
+  },
 ];
 
 // ── Women's catalog (10 items, hybrid) ───────────────────────────────────
@@ -287,6 +397,115 @@ const WOMEN_CATALOG: BasicItem[] = [
     garment: 'Slim 1-inch wide black calfskin leather belt. Brushed silver buckle, single keeper loop, polished edge. The Row / Khaite aesthetic — minimal, refined.',
     photography: PHOTOGRAPHY.accessory,
   },
+  // ── Catalog expansion (2026-05-15) — filling visible gaps in starter pack ──
+  {
+    slug: 'heather-grey-tee-women',
+    category: 'tee',
+    silhouetteTag: 'fitted',
+    name: 'Heather Grey Tee',
+    tier: 'flash',
+    garment: 'Slim-fit crew-neck t-shirt in midweight 160gsm Pima cotton jersey, heather grey marl. Slightly tapered through waist, fitted sleeves ending upper bicep, ribbed crew collar. Subtle melange in the knit. The Row / Toteme aesthetic.',
+    photography: PHOTOGRAPHY.tee,
+  },
+  {
+    slug: 'navy-fitted-tee-women',
+    category: 'tee',
+    silhouetteTag: 'fitted',
+    name: 'Navy Fitted Tee',
+    tier: 'flash',
+    garment: 'Slim-fit crew tee in midweight Pima cotton jersey, deep navy almost-black. Tapered waist, ribbed crew collar, fitted sleeves. Toteme aesthetic.',
+    photography: PHOTOGRAPHY.tee,
+  },
+  {
+    slug: 'olive-fitted-tee-women',
+    category: 'tee',
+    silhouetteTag: 'fitted',
+    name: 'Olive Fitted Tee',
+    tier: 'flash',
+    garment: 'Slim-fit crew tee in midweight Pima cotton jersey, washed olive — softened, not bright. Tapered waist, ribbed crew collar, fitted sleeves. Toteme aesthetic.',
+    photography: PHOTOGRAPHY.tee,
+  },
+  {
+    slug: 'washed-blue-jean-women',
+    category: 'jean',
+    silhouetteTag: 'high-rise-straight',
+    name: 'Washed Blue Jean',
+    tier: 'flash',
+    garment: 'High-rise straight-leg jean in medium-wash blue denim with subtle whiskering at the hips and natural fade at the thighs. 12oz weight, slight stretch, sits at the natural waist, falls straight from hip to hem. Khaite silhouette.',
+    photography: PHOTOGRAPHY.jean,
+  },
+  {
+    slug: 'ecru-trouser-women',
+    category: 'trouser',
+    silhouetteTag: 'wide-leg-tailored',
+    name: 'Ecru Wide-Leg Trouser',
+    tier: 'pro',
+    garment: 'High-waisted wide-leg trouser in heavyweight ecru wool blend, full length to floor. Pleated front, clean side seam, tonal button at waistband, generous leg with natural drape, hem grazing ground. The Frankie Shop / Toteme silhouette.',
+    photography: PHOTOGRAPHY.trouser,
+  },
+  {
+    slug: 'black-leather-loafer-women',
+    category: 'shoe',
+    silhouetteTag: 'classic-penny',
+    name: 'Black Penny Loafer',
+    tier: 'pro',
+    garment: 'Classic penny loafer in polished black calfskin leather. Apron toe, hand-stitched strap with single keeper slit, slim leather sole with low stacked heel, no tassel, no hardware. This is a real loafer, NOT a ballet flat. Margiela / The Row silhouette.',
+    photography: PHOTOGRAPHY.shoe,
+  },
+  {
+    slug: 'brown-leather-belt-women',
+    category: 'accessory',
+    silhouetteTag: 'classic-belt',
+    name: 'Brown Leather Belt',
+    tier: 'flash',
+    garment: 'Slim 1-inch wide warm-brown calfskin leather belt. Brushed antique-brass buckle, single keeper loop, polished edge with slight patina. The Row / Khaite aesthetic.',
+    photography: PHOTOGRAPHY.accessory,
+  },
+  {
+    slug: 'white-cotton-cap-women',
+    category: 'accessory',
+    silhouetteTag: 'six-panel-cap',
+    name: 'White Cotton Cap',
+    tier: 'flash',
+    garment: 'Six-panel cotton twill baseball cap in optic white. Curved brim, low crown, brass adjustment buckle at the back, no logo or embroidery. Unstructured. Khaite / Acne aesthetic.',
+    photography: PHOTOGRAPHY.accessory,
+  },
+  {
+    slug: 'black-leather-jacket-women',
+    category: 'jacket',
+    silhouetteTag: 'moto',
+    name: 'Black Leather Jacket',
+    tier: 'pro',
+    garment: 'Slim leather moto jacket in matte black calfskin leather, asymmetric front zip, notched lapel, snap collar, two zip side pockets, single zip chest pocket, zip cuffs. Cropped at the hip, defined waist. Saint Laurent silhouette but minimal — no studs, no quilting.',
+    photography: PHOTOGRAPHY.jacket,
+  },
+  {
+    slug: 'cream-silk-blouse-women',
+    category: 'sweater',
+    silhouetteTag: 'silk-blouse',
+    name: 'Cream Silk Blouse',
+    tier: 'pro',
+    garment: 'Relaxed-fit silk blouse in warm cream-ivory silk crepe. Soft-collar with V-shaped opening, long sleeves with single-button cuff, slightly loose through the body, straight hem. The Row / Khaite aesthetic — fluid, quiet luxury.',
+    photography: PHOTOGRAPHY.sweater,
+  },
+  {
+    slug: 'brown-chelsea-boot-women',
+    category: 'boot',
+    silhouetteTag: 'classic-chelsea',
+    name: 'Brown Chelsea Boot',
+    tier: 'flash',
+    garment: 'Classic chelsea boot in warm chestnut-brown polished calfskin leather. Elasticated side panels, brown leather pull tab, almond toe, leather sole with subtle 1-inch stacked heel. Slimmer last than men\'s. Saint Laurent silhouette.',
+    photography: PHOTOGRAPHY.boot,
+  },
+  {
+    slug: 'light-wash-jean-women',
+    category: 'jean',
+    silhouetteTag: 'high-rise-straight',
+    name: 'Light Wash Jean',
+    tier: 'flash',
+    garment: 'High-rise straight-leg jean in pale stonewashed blue denim. Sits at natural waist, falls straight from hip to hem, light fade across the front of the legs. Soft hand. Khaite / Toteme silhouette.',
+    photography: PHOTOGRAPHY.jean,
+  },
 ];
 
 const NEGATIVE = [
@@ -295,6 +514,7 @@ const NEGATIVE = [
   'NEVER include: cluttered backgrounds, props, additional garments, decorative elements',
   'NEVER include: flat-lay from-above arrangements, top-down compositions',
   'NEVER include: oversaturated colors, HDR effects, blur, lens flare',
+  'NEVER include: multiple views of the same garment, side-by-side product spreads, front-and-back comparison views, multi-angle layouts, triptychs, grid arrangements — output ONE garment from ONE angle, ONE image',
 ].join('. ');
 
 function buildPrompt(item: BasicItem): string {
@@ -415,10 +635,13 @@ async function runCatalog(gender: 'men' | 'women', items: BasicItem[]) {
   const outputDir = `./basics-output/${gender}`;
   mkdirSync(outputDir, { recursive: true });
 
-  // Skip items already in Supabase unless --force-regen is passed
-  const force = args.includes('--force-regen');
+  // Skip items already in Supabase unless --force-regen is passed.
+  // --slug narrows to a single item (force-regen implied).
+  const force = args.includes('--force-regen') || Boolean(slugArg);
   const existing = force ? new Set<string>() : await alreadyGenerated(gender);
-  const toRun = items.filter((item) => !existing.has(item.slug));
+  const toRun = items
+    .filter((item) => (slugArg ? item.slug === slugArg : true))
+    .filter((item) => !existing.has(item.slug));
   const skipped = items.length - toRun.length;
 
   console.log(`\n[basics] ${gender.toUpperCase()} catalog — ${toRun.length} new${skipped > 0 ? ` (${skipped} already in Supabase, skipped — pass --force-regen to redo)` : ''}`);
