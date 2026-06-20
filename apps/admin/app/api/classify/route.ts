@@ -17,6 +17,18 @@ const KINDS = [
   'jacket', 'coat', 'sneaker', 'boot', 'heel', 'flat', 'bag', 'cap',
 ] as const;
 
+// Slot is derived deterministically from kind — the combo engine only needs
+// slot-level accuracy (PRODUCT_STRATEGY.md §9.1), and a fixed map is more
+// reliable than asking the model. 'dress' fills the top+bottom slot at once.
+const KIND_TO_SLOT: Record<(typeof KINDS)[number], string> = {
+  tee: 'top', oxford: 'top', knit: 'top',
+  dress: 'dress',
+  denim: 'bottom', trouser: 'bottom', shorts: 'bottom', skirt: 'bottom',
+  jacket: 'outerwear', coat: 'outerwear',
+  sneaker: 'footwear', boot: 'footwear', heel: 'footwear', flat: 'footwear',
+  bag: 'accessory', cap: 'accessory',
+};
+
 const MODEL = 'gemini-2.5-flash';
 // gemini-2.5-flash rough rates ($/token); enough for telemetry, not billing.
 const INPUT_RATE = 0.30 / 1_000_000;
@@ -46,6 +58,12 @@ const PROMPT = [
   '',
   'colorName: the dominant colour in plain words (e.g. "charcoal", "optic white", "washed indigo").',
   'material: best guess at fabric (e.g. "cotton jersey", "raw denim", "wool"). Say "unsure" if unclear.',
+  '',
+  'Also describe the garment FOR COMBINING into outfits:',
+  'formality: integer 1-5 (1 = gym/loungewear, 3 = smart casual, 5 = formal/black-tie).',
+  'pattern: "solid" (no pattern), "subtle" (small/quiet pattern), or "bold" (loud/large pattern).',
+  'season: "all-season", "warm" (lightweight/summer), or "cold" (heavy/winter).',
+  '',
   'detail: one quiet lowercase phrase a luxury catalogue would use — two short clauses, period-separated,',
   '  no marketing adjectives, no exclamation (e.g. "dense cotton. clean neck.").',
   'reason: one short sentence on why it is unknown/ambiguous, or "" if confident.',
@@ -60,12 +78,15 @@ const RESPONSE_SCHEMA = {
     ambiguous: { type: Type.BOOLEAN },
     colorName: { type: Type.STRING },
     material: { type: Type.STRING },
+    formality: { type: Type.INTEGER },
+    pattern: { type: Type.STRING, enum: ['solid', 'subtle', 'bold'] },
+    season: { type: Type.STRING, enum: ['all-season', 'warm', 'cold'] },
     detail: { type: Type.STRING },
     reason: { type: Type.STRING },
   },
   required: [
     'isGarment', 'kind', 'alternativeKind', 'ambiguous',
-    'colorName', 'material', 'detail', 'reason',
+    'colorName', 'material', 'formality', 'pattern', 'season', 'detail', 'reason',
   ],
 };
 
@@ -119,8 +140,11 @@ export async function POST(request: Request) {
     // Normalize the 'none' sentinel back to null for the app's gate.
     const alternativeKind =
       raw.alternativeKind === 'none' || raw.alternativeKind === raw.kind ? null : raw.alternativeKind;
+    // Derive slot deterministically from kind (the gate accuracy axis, §9.1).
+    const kind = raw.kind as string;
+    const slot = KIND_TO_SLOT[kind as keyof typeof KIND_TO_SLOT] ?? 'unknown';
 
-    const classification = { ...raw, alternativeKind };
+    const classification = { ...raw, alternativeKind, slot };
 
     const usage = response.usageMetadata;
     const promptTokens = usage?.promptTokenCount ?? 0;
