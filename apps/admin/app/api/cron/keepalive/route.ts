@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from '@/lib/supabase';
 
 // Supabase free-tier keep-alive (vercel.json cron, daily).
 //
@@ -12,13 +12,13 @@ import { createClient } from '@supabase/supabase-js';
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !supabaseKey) {
-    return NextResponse.json({ ok: false, error: 'supabase env missing' }, { status: 500 });
+  let supabase;
+  try {
+    supabase = getSupabaseAdmin();
+  } catch (e) {
+    return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : 'supabase env missing' }, { status: 500 });
   }
 
-  const supabase = createClient(supabaseUrl, supabaseKey);
   const { count, error } = await supabase
     .from('classify_events')
     .select('id', { count: 'exact', head: true });

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, Type } from '@google/genai';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from '@/lib/supabase';
 
 // Public, app-facing garment classifier (CAMERA_BUILD_PLAN.md Phase B).
 // The styleMeUp app POSTs a captured photo; we return a structured
@@ -159,13 +159,11 @@ export async function POST(request: Request) {
     // image, no PII. Mirrors the app's gate so lane mix is queryable.
     // Best-effort: a logging failure must never fail the classification.
     try {
-      const supabaseUrl = process.env.SUPABASE_URL;
-      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-      if (supabaseUrl && supabaseKey) {
+      {
         const lane = raw.isGarment === false
           ? 'reject'
           : (kind === 'unknown' || raw.ambiguous === true || alternativeKind != null) ? 'ask' : 'accept';
-        const supabase = createClient(supabaseUrl, supabaseKey);
+        const supabase = getSupabaseAdmin();
         await supabase.from('classify_events').insert({
           model: MODEL,
           is_garment: raw.isGarment === true,
