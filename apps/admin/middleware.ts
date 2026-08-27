@@ -37,7 +37,7 @@ export function middleware(request: NextRequest) {
 export const config = {
   // Run on admin pages + private APIs; skip the app-facing public endpoints
   // (the issue feed and the garment classifier).
-  matcher: ['/((?!api/issues|api/classify|\\.well-known/workflow|_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!api/issues|api/classify|api/cron|\\.well-known/workflow|_next/static|_next/image|favicon.ico).*)'],
 };
 
 function decodeBasicAuth(encoded: string): string | null {
