@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenAI, Type } from '@google/genai';
+import { createClient } from '@supabase/supabase-js';
 
 // Public, app-facing garment classifier (CAMERA_BUILD_PLAN.md Phase B).
 // The styleMeUp app POSTs a captured photo; we return a structured
@@ -14,7 +15,7 @@ export const dynamic = 'force-dynamic';
 
 const KINDS = [
   'tee', 'oxford', 'knit', 'dress', 'denim', 'trouser', 'shorts', 'skirt',
-  'jacket', 'coat', 'sneaker', 'boot', 'heel', 'flat', 'bag', 'cap',
+  'jacket', 'coat', 'sneaker', 'boot', 'heel', 'flat', 'bag', 'belt', 'cap',
 ] as const;
 
 // Slot is derived deterministically from kind — the combo engine only needs
@@ -26,11 +27,13 @@ const KIND_TO_SLOT: Record<(typeof KINDS)[number], string> = {
   denim: 'bottom', trouser: 'bottom', shorts: 'bottom', skirt: 'bottom',
   jacket: 'outerwear', coat: 'outerwear',
   sneaker: 'footwear', boot: 'footwear', heel: 'footwear', flat: 'footwear',
-  bag: 'accessory', cap: 'accessory',
+  bag: 'accessory', belt: 'accessory', cap: 'accessory',
 };
 
-const MODEL = 'gemini-2.5-flash';
-// gemini-2.5-flash rough rates ($/token); enough for telemetry, not billing.
+// gemini-2.5-flash was retired for new API users (404 caught by
+// evals/classify on 2026-06-20); 3.6-flash is the current flash tier.
+const MODEL = 'gemini-3.6-flash';
+// Rough flash-tier rates ($/token); telemetry estimate, not billing truth.
 const INPUT_RATE = 0.30 / 1_000_000;
 const OUTPUT_RATE = 2.5 / 1_000_000;
 
@@ -150,9 +153,36 @@ export async function POST(request: Request) {
     const promptTokens = usage?.promptTokenCount ?? 0;
     const outputTokens = usage?.candidatesTokenCount ?? 0;
     const costUsd = promptTokens * INPUT_RATE + outputTokens * OUTPUT_RATE;
+    const latencyMs = Date.now() - t0;
+
+    // Traceability (classify_events): one telemetry row per decision — no
+    // image, no PII. Mirrors the app's gate so lane mix is queryable.
+    // Best-effort: a logging failure must never fail the classification.
+    try {
+      const supabaseUrl = process.env.SUPABASE_URL;
+      const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (supabaseUrl && supabaseKey) {
+        const lane = raw.isGarment === false
+          ? 'reject'
+          : (kind === 'unknown' || raw.ambiguous === true || alternativeKind != null) ? 'ask' : 'accept';
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        await supabase.from('classify_events').insert({
+          model: MODEL,
+          is_garment: raw.isGarment === true,
+          kind,
+          slot,
+          ambiguous: raw.ambiguous === true,
+          lane,
+          latency_ms: latencyMs,
+          cost_usd: costUsd,
+        });
+      }
+    } catch {
+      // swallow — telemetry only
+    }
 
     return NextResponse.json(
-      { classification, costUsd, latencyMs: Date.now() - t0 },
+      { classification, costUsd, latencyMs },
       { headers: publicHeaders() },
     );
   } catch (error) {
